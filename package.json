@@ -1,0 +1,11 @@
+{
+	"name": "RagWiki-bot",
+	"version": "0.0.1",
+	"main": "index.js",
+	"repository": "",
+	"author": "Zack Correa https://github.com/Zack-Correa/",
+	"license": "MIT",
+	"dependencies": {
+		"discord.js": "^11.2.1"
+	}
+}

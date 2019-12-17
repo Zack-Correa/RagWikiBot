@@ -1,0 +1,24 @@
+{
+    "endpoints": [{
+            "bropediaUrl": "https://bropedia.net/api.php",
+            "params": {
+                "action": "opensearch",
+                "search": ""
+            }
+        },
+        {
+            "browiki": "https://browiki.org/api.php",
+            "params": {
+                "action": "opensearch",
+                "search": ""
+            }
+        },
+        {
+            "divinePride": "https://www.divine-pride.net/api/database/Item/",
+            "params": {
+                "apiKey": "",
+                "server": ""
+            }
+        }
+    ]
+}
