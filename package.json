@@ -2,7 +2,7 @@
 	"name": "RagWiki-bot",
 	"version": "0.0.1",
 	"main": "index.js",
-	"repository": "",
+	"repository": "https://github.com/Zack-Correa/RagWikiBot",
 	"author": "Zack Correa https://github.com/Zack-Correa/",
 	"license": "MIT",
 	"dependencies": {
