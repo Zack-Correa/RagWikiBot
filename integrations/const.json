@@ -16,9 +16,11 @@
         {
             "url": "https://www.divine-pride.net/api/database/Item/",
             "params": {
-                "apiKey": "",
                 "server": ""
             }
+        },
+        {
+            "url": "https://www.divine-pride.net/Api/Regions/SetServer/"
         }
-    ]
+    ] 
 }
