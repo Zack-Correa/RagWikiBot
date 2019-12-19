@@ -22,5 +22,13 @@
         {
             "url": "https://www.divine-pride.net/Api/Regions/SetServer/"
         }
-    ] 
+    ],
+    "assets": [
+        {
+            "url": "https://browiki.org/resources/assets/wiki.png?c2539"
+        },
+        {
+            "url": "https://portal.bropedia.net/user/pages/01.home/dev.png"
+        }
+    ]
 }

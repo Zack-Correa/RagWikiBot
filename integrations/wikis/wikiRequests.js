@@ -20,7 +20,7 @@ function makeRequest(keyword, wikiType, callback) {
         if(error) {
             console.log(error);
         }  
-        return callback(body);      
+        return callback(Array(body));
     });
 }
 
