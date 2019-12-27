@@ -12,6 +12,7 @@ function makeRequest(keyword, wikiType, callback) {
 
     let endpoint = settings.endpoints[n].url;
     let actionParam = settings.endpoints[n].params.action;
+    
     //Set the request parameters
     let options = {method: 'GET', url: endpoint, qs: {action: actionParam, search: keyword}};
     
@@ -20,6 +21,7 @@ function makeRequest(keyword, wikiType, callback) {
         if(error) {
             console.log(error);
         }  
+        console.log(body)
         return callback(Array(body));
     });
 }

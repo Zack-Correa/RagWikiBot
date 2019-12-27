@@ -15,23 +15,29 @@ client.on('ready', () => {
 });
 
 client.on('message', msg => {
-    console.log(msg.content[0])
-    if (msg.content.test(/%database\s(.+)/)) {
+    msg.contentArray = msg.content.split(" ")
+    console.log(msg.content)
+    if (msg.content.match(/%database\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');        
         divinePride.makeItemIdRequest(splitedMessage[1], splitedMessage[2], (body, itemId) => msg.reply(parseDatabaseResponse(body, itemId)));
         return;
     }
-    else if (msg.content[0] == '%pedia') {
+    else if (msg.content.match(/%pedia\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');
         wiki.makeRequest(splitedMessage[1], 'pedia', response => embedMessage(msg, parseWikiResponse(response), 'Bropedia'));
         return;
-    }
-
-    else if(msg.content[0] == '%wiki') {
+    } 
+    
+    else if(msg.content.match(/%wiki\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');        
         wiki.makeRequest(splitedMessage[1], 'wiki', response => embedMessage(msg, parseWikiResponse(response), 'Browiki'));
         return;        
     }
+    /*else if (msg.content.startsWith('teste')) {
+        var splitedMessage = msg.content.split(' ');
+        divinePride.makeSearchQuery();
+        return;
+    }*/
 });
 
 client.login(authToken);
@@ -40,6 +46,7 @@ client.login(authToken);
 
 function parseWikiResponse(response){
     var parsedResponse = [];
+    console.log(response);
     response = JSON.parse(response)
 
     //Verifies result inexistence. If true, return warning message
@@ -80,7 +87,8 @@ function parseDatabaseResponse(response, itemId) {
 
 function embedMessage(messageContext, messageBody, wikiType) {
     var thumbnail;
-    if(wikiType == 'Browiki') thumbnail = setting.assets[0].url;
+    console.log('settings: ' + settings)
+    if(wikiType == 'Browiki') thumbnail = settings.assets[0].url;
     else thumbnail = settings.assets[1].url;
 
     var searchedWord = messageBody.shift();
@@ -93,5 +101,6 @@ function embedMessage(messageContext, messageBody, wikiType) {
 	.setTimestamp()
     .setFooter('Desenvolvido por Zack#7458');
 
+    console.log(embededMessage)
     messageContext.reply(embededMessage);
 }

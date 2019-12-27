@@ -20,6 +20,12 @@
             }
         },
         {
+            "url": "https://www.divine-pride.net/database/search?q=",
+            "params": {
+                "server": ""
+            }
+        },
+        {
             "url": "https://www.divine-pride.net/Api/Regions/SetServer/"
         }
     ],
