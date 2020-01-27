@@ -1,9 +1,7 @@
 const request = require("request");
 const settings = require('../const.json');
+const htmlparser = require("htmlparser");
 require('dotenv/config');
-
-
-//var serverEndpoint = settings.endpoints[3].url;
 
 
 function makeItemIdRequest(itemId, server, callback) {
@@ -22,23 +20,27 @@ function makeItemIdRequest(itemId, server, callback) {
     });
 }
 
-/*function makeSearchQuery(quereableString, server, callback) {
-    let regexp = /<td>\n\s*<img(<a href)*((.|\n)*?(<\/td>))/g;
-    let queryEndpoint = "https://www.divine-pride.net/database/search?q=white"
+function makeSearchQuery(quereableString, server, callback) {
+    let queryEndpoint = "https://www.divine-pride.net/database/search?q=" + quereableString
     let options = {method: 'GET', url: queryEndpoint};
     request(options, (error, response, body) => {
+        let regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
+        //let regexp = /<td>/g;
         if(error) {
             console.log(error);
         }
-        console.log(body)
-        console.log(String(body).match(regexp));
-        //return callback(body);   
+
+        //console.log(body.match(regexp).toString().split("<td>"));
+        if(body.match(regexp) != undefined) {
+            return callback(body.match(regexp).toString().split("<td>"));
+        }
+        return callback('ERROR');
     });
-}*/
+}
     
 
 
 module.exports = {
-    makeItemIdRequest
-    //makeSearchQuery
+    makeItemIdRequest,
+    makeSearchQuery
 }

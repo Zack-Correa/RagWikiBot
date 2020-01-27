@@ -11,33 +11,33 @@ const client = new Discord.Client();
 
 //Assure that the client is online
 client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
+    //console.log(`Logged in as ${client.user.tag}!`);
 });
 
 client.on('message', msg => {
     msg.contentArray = msg.content.split(" ")
-    console.log(msg.content)
-    if (msg.content.match(/%database\s(.+)/)) {
+    //console.log(msg.content)
+    if (msg.content.toLowerCase().match(/%buscaritemid\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');        
         divinePride.makeItemIdRequest(splitedMessage[1], splitedMessage[2], (body, itemId) => msg.reply(parseDatabaseResponse(body, itemId)));
         return;
     }
-    else if (msg.content.match(/%pedia\s(.+)/)) {
+    else if (msg.content.toLowerCase().match(/%pedia\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');
         wiki.makeRequest(splitedMessage[1], 'pedia', response => embedMessage(msg, parseWikiResponse(response), 'Bropedia'));
         return;
     } 
     
-    else if(msg.content.match(/%wiki\s(.+)/)) {
+    else if(msg.content.toLowerCase().match(/%wiki\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');        
         wiki.makeRequest(splitedMessage[1], 'wiki', response => embedMessage(msg, parseWikiResponse(response), 'Browiki'));
         return;        
     }
-    /*else if (msg.content.startsWith('teste')) {
-        var splitedMessage = msg.content.split(' ');
-        divinePride.makeSearchQuery();
+    else if (msg.content.toLowerCase().match(/%buscaritem\s(.+)/)) {
+        var splitedMessage = msg.content.split(' '); 
+        divinePride.makeSearchQuery(splitedMessage[1],'iro', (body) => parseDatabaseBodyResponse(splitedMessage[1], body, (parsedBody) => embedMessage(msg, parsedBody, 'DivinePride' )));
         return;
-    }*/
+    }
 });
 
 client.login(authToken);
@@ -77,7 +77,7 @@ function parseWikiResponse(response){
 }
 
 function parseDatabaseResponse(response, itemId) {
-    //Remove illegal words "^000000" and format to JSON
+    //Remove illegal "^000000" words and format to JSON
     let formatedResponse = response;
     formatedResponse = JSON.parse(response.replace(/(\^[0-9|a-z]{6,7})/g, ''));
 
@@ -87,9 +87,10 @@ function parseDatabaseResponse(response, itemId) {
 
 function embedMessage(messageContext, messageBody, wikiType) {
     var thumbnail;
-    console.log('settings: ' + settings)
+    //console.log('settings: ' + settings)
     if(wikiType == 'Browiki') thumbnail = settings.assets[0].url;
-    else thumbnail = settings.assets[1].url;
+    else if (wikiType == 'Bropedia') thumbnail = settings.assets[1].url;
+    else thumbnail = settings.assets[2].url;
 
     var searchedWord = messageBody.shift();
 
@@ -104,3 +105,43 @@ function embedMessage(messageContext, messageBody, wikiType) {
     console.log(embededMessage)
     messageContext.reply(embededMessage);
 }
+
+function parseDatabaseBodyResponse(searchedWord, response, callback) {
+    if(response == 'ERROR') {
+        return callback([searchedWord, "Não foram encontrados resultados!"]);
+    }
+    var parsedResponse = [];
+    response.shift();
+    parsedResponse.push(searchedWord);
+    
+    response.every(body => {
+        body.toString().replace('</td>,', '').replace('\\r\\n', '').replace(/\s/g, '');
+
+        var itemName = body.split('=')[2].split(/\r\n/)[0].replace(/"/g, '').replace('\/>', '');
+        var itemURL =  "\n https://www.divine-pride.net/database/item/" + body.split('=')[1].match(/[0-9]+/) + "\n";
+
+        parsedResponse.push(itemName+itemURL);
+        
+        if (parsedResponse.length > 5) return false;
+        else return true;
+    });
+    parsedResponse.push(`\nPesquisa completa:\nhttps://www.divine-pride.net/database/search?q=${searchedWord} `);
+    
+    return callback(parsedResponse);
+
+}
+
+
+/*TO DO: 
+*   QUERY BY NAME *CHECKED*
+*   MVP TIMER
+*   MONSTER QUERY BY NAME/ID
+*   MOVE-BOT function, including music
+*   
+*
+*
+*
+*
+*
+*
+*/
