@@ -13,8 +13,8 @@ node index.js
 - [x] Consulta de missões e histórias nas enciclopédias [bROpedia](https://bropedia.net) e [bROwiki](https://browiki.org/)
 - [x] Consulta de itens por id no database [Divine-Pride](https://www.divine-pride.net/database/item)
 - [x] Consulta de itens por nome no database [Divine-Pride](https://www.divine-pride.net/database/item)
-[x] Consulta de monstros no database [Divine-Pride](https://www.divine-pride.net/database/monster)
-- [] Consulta de mapas no database [Divine-Pride](ttps://www.divine-pride.net/database/map/).
+- [ ] Consulta de monstros no database [Divine-Pride](https://www.divine-pride.net/database/monster)
+- [ ] Consulta de mapas no database [Divine-Pride](ttps://www.divine-pride.net/database/map/).
 
 
 ## Contributing
