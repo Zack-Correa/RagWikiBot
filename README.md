@@ -1,20 +1,35 @@
 # RagWiki
 
-RagWiki is a bot to get items, quests and more from various Ragnarok Wiki/Database
+RagWiki is a bot to get items, quests and more from various Ragnarok Wiki/Databases
 
-## Usage
 
-Use [node](https://nodejs.org/en/) to initialize the RagWiki bot.
+## Features
+- [x] Search of quests and game history in encyclopedias [bROpedia](https://bropedia.net) e [bROwiki](https://browiki.org/)
+- [x] Search of items by ID in the database [Divine-Pride](https://www.divine-pride.net/database/item)
+- [x] Search of items by name in the database [Divine-Pride](https://www.divine-pride.net/database/item)
+- [ ] Search of monster in the database [Divine-Pride](https://www.divine-pride.net/database/monster)
+- [ ] Search of maps in the database [Divine-Pride](https://www.divine-pride.net/database/map/).
 
-```bash
-node index.js
-```
-## Funcionalidades
-- [x] Consulta de missões e histórias nas enciclopédias [bROpedia](https://bropedia.net) e [bROwiki](https://browiki.org/)
-- [x] Consulta de itens por id no database [Divine-Pride](https://www.divine-pride.net/database/item)
-- [x] Consulta de itens por nome no database [Divine-Pride](https://www.divine-pride.net/database/item)
-- [ ] Consulta de monstros no database [Divine-Pride](https://www.divine-pride.net/database/monster)
-- [ ] Consulta de mapas no database [Divine-Pride](ttps://www.divine-pride.net/database/map/).
+## Commands
+For all command execution you have to use the ```%``` prefix.
+
+>%wiki SEARCH_TERM
+
+The feature ```wiki``` give you all the search results for the desired term on the [bROwiki](https://browiki.org/) project.
+
+>%pedia SEARCH_TERM
+
+The feature ```pedia ``` give you all the search results for the desired term on the [bROpedia](https://bropedia.net) project.
+
+>%buscaritem ITEM_NAME
+
+The feature ```buscaritem ``` give you all the search results for the desired item on the [Divine-Pride](https://www.divine-pride.net/database/item) database.
+
+>%buscaritemid ITEM_ID SERVER_INITIALS
+
+The feature ```buscaritem ``` give you the item description on the selected server (optional) in the [Divine-Pride](https://www.divine-pride.net/database/item) database.
+
+
 
 
 ## Contributing
