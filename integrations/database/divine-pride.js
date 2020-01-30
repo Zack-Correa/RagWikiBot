@@ -21,8 +21,11 @@ function makeItemIdRequest(itemId, server, callback) {
 }
 
 function makeSearchQuery(quereableString, server, callback) {
-    let queryEndpoint = "https://www.divine-pride.net/database/search?q=" + quereableString
-    let options = {method: 'GET', url: queryEndpoint};
+    const j = request.jar();
+    let queryEndpoint = "https://www.divine-pride.net/database/search?q=" + encodeURIComponent(quereableString)
+    let cookie = request.cookie('lang=pt');
+    j.setCookie(cookie, queryEndpoint);
+    let options = {method: 'GET', url: queryEndpoint, jar: j, queryEndpoint};
     request(options, (error, response, body) => {
         let regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
         //let regexp = /<td>/g;

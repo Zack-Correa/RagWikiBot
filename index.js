@@ -117,7 +117,12 @@ function parseDatabaseBodyResponse(searchedWord, response, callback) {
     response.every(body => {
         body.toString().replace('</td>,', '').replace('\\r\\n', '').replace(/\s/g, '');
 
-        var itemName = body.split('=')[2].split(/\r\n/)[0].replace(/"/g, '').replace('\/>', '');
+        var itemName = body.split('=')[2].split(/\r\n/)[0]
+        .replace(/"/g, '').replace('\/>', '')
+            .replace(/(&#[0-9]+;)/g, function(text) {
+                return String.fromCharCode(text.match(/[0-9]+/))
+            });
+
         var itemURL =  "\n https://www.divine-pride.net/database/item/" + body.split('=')[1].match(/[0-9]+/) + "\n";
 
         parsedResponse.push(itemName+itemURL);
@@ -137,7 +142,8 @@ function parseDatabaseBodyResponse(searchedWord, response, callback) {
 *   MVP TIMER
 *   MONSTER QUERY BY NAME/ID
 *   MOVE-BOT function, including music
-*   
+*   ORGANIZATION IMPROVMENTS
+
 *
 *
 *
