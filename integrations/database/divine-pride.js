@@ -1,6 +1,5 @@
 const request = require("request");
 const settings = require('../const.json');
-const htmlparser = require("htmlparser");
 require('dotenv/config');
 
 
