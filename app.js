@@ -12,6 +12,14 @@ const client = new Discord.Client();
 //Assure that the client is online
 client.on('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
+    client.user.setStatus('available')
+    client.user.setPresence({
+        game: {
+            name: 'Digite %ajuda para obter os comandos do bot',
+            type: "STREAMING",
+            url: "https://github.com/Zack-Correa/RagWikiBot/tree/dev"
+        }
+    });
 });
 
 client.on('message', msg => {
@@ -41,6 +49,12 @@ client.on('message', msg => {
     else if (msg.content.toLowerCase().match(/^%buscaritem\s(.+)/)) {
         var message = getSearchString(msg.content);
         divinePride.makeSearchQuery(message,'iro', (body) => parseDatabaseBodyResponse(message, body, (parsedBody) => embedMessage(msg, parsedBody, 'DivinePride' )));
+        return;
+    }
+    //Return commands
+    else if (msg.content.toLowerCase().match(/^%ajuda/)) {
+        var message = getSearchString(msg.content);
+        msg.reply('acesse https://github.com/Zack-Correa/RagWikiBot/blob/dev/README_PT-BR.md para ler os comandos disponiveis!');
         return;
     }
 });
