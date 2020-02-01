@@ -1,1 +1,1 @@
-worker: node startBot.js
+worker: node app.js
