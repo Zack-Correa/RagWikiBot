@@ -47,8 +47,12 @@ client.on('message', msg => {
 
     //Searchs items by name
     else if (msg.content.toLowerCase().match(/^%buscaritem\s(.+)/)) {
-        var message = getSearchString(msg.content);
-        divinePride.makeSearchQuery(message,'iro', (body) => parseDatabaseBodyResponse(message, body, (parsedBody) => embedMessage(msg, parsedBody, 'DivinePride' )));
+        var message = getSearchString(msg.content).split(' ');
+        var server = message.pop();
+        console.log(server);
+        console.log(message)
+        message = message.join(' ');
+        divinePride.makeSearchQuery(message, server, (body) => parseDatabaseBodyResponse(message, body, (parsedBody) => embedMessage(msg, parsedBody, 'DivinePride')));
         return;
     }
     //Return commands

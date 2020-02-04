@@ -20,11 +20,28 @@ function makeItemIdRequest(itemId, server, callback) {
 }
 
 function makeSearchQuery(quereableString, server, callback) {
-    //Set query URL and the cookie to get PT-BR language response
+    //Set query URL and the cookie to get according language response
     const j = request.jar();
-    let cookie = request.cookie('lang=pt');
+    let cookie;
+    switch (server.toLowerCase()) {
+        case "iro":
+            cookie = undefined;
+            break;
+        case "kro":
+            cookie = request.cookie('lang=kr');
+            break;
+        case "jro":
+            cookie = request.cookie('lang=jp');
+            break;
+        default:
+            cookie = request.cookie('lang=pt');
+            break;
+            // fazer map bonitao
+    }
+    
     let queryEndpoint = settings.endpoints[3].url + encodeURIComponent(quereableString)
-    j.setCookie(cookie, queryEndpoint);
+    if(cookie)
+        j.setCookie(cookie, queryEndpoint);
     
     let options = {method: 'GET', url: queryEndpoint, jar: j, queryEndpoint};
     request(options, (error, response, body) => {
