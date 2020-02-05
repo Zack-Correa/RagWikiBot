@@ -177,7 +177,7 @@ function parseDatabaseBodyResponse(searchedWord, response, callback) {
 /*TO DO: 
 *   QUERY BY NAME TO FULL DESCRIPTION
 *   MVP TIMER
-*   
+*   CODE OPTIMIZATION WITH HANDLERS
 *   MONSTER QUERY BY NAME/ID
 *   MOVE-BOT function, including music
 *   ORGANIZATION IMPROVMENTS

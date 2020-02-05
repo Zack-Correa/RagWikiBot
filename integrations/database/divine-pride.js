@@ -21,29 +21,31 @@ function makeItemIdRequest(itemId, server, callback) {
 
 function makeSearchQuery(quereableString, server, callback) {
     //Set query URL and the cookie to get according language response
-    const j = request.jar();
     let cookie;
-    switch (server.toLowerCase()) {
-        case "iro":
-            cookie = undefined;
-            break;
-        case "kro":
-            cookie = request.cookie('lang=kr');
-            break;
-        case "jro":
-            cookie = request.cookie('lang=jp');
-            break;
-        default:
-            cookie = request.cookie('lang=pt');
-            break;
-            // fazer map bonitao
+    const j = request.jar();
+    let serverMap = {
+        "iro": () => cookie = undefined,
+        "kro": () => cookie = request.cookie('lang=kr'),
+        "bro": () => cookie = request.cookie('lang=pt'),
+        "jro": () => cookie = request.cookie('lang=jp')
+    };
+    
+    //Get requested server from map
+    try{
+        serverMap[server]();
     }
+    catch {
+        //Returns error msg if server isn't in the server list
+        return callback('ERROR');
+    }
+
     
     let queryEndpoint = settings.endpoints[3].url + encodeURIComponent(quereableString)
-    if(cookie)
+    if(cookie) {
         j.setCookie(cookie, queryEndpoint);
-    
+    }
     let options = {method: 'GET', url: queryEndpoint, jar: j, queryEndpoint};
+    
     request(options, (error, response, body) => {
         //Error handling
         if(error) {
