@@ -2,6 +2,7 @@ const Discord = require('discord.js');
 const wiki = require('./integrations/wikis/wikiRequests.js');
 const divinePride = require('./integrations/database/divine-pride.js');
 const settings = require('./integrations/const.json');
+const messageHandler = require('./handlers/messageHandler.js');
 require('dotenv/config');
 
 
@@ -23,16 +24,18 @@ client.on('ready', () => {
 });
 
 client.on('message', msg => {
+    if (msg.author.bot) return;
 
+    new messageHandler().getAction(msg.content, (response) => msg.reply(response));
     //Searchs items by ID
-    if (msg.content.toLowerCase().match(/^%buscaritemid\s(.+)/)) {
+    /*if (msg.content.toLowerCase().match(/^%buscaritemid\s(.+)/)) {
         var splitedMessage = msg.content.split(' ');        
         divinePride.makeItemIdRequest(splitedMessage[1], splitedMessage[2], (body, itemId) => msg.reply(parseDatabaseResponse(body, itemId)));
         return;
-    }
+    }*/
 
     //Searchs Bropedia results for that keyword
-    else if (msg.content.toLowerCase().match(/^%pedia\s(.+)/)) {
+    /*else if (msg.content.toLowerCase().match(/^%pedia\s(.+)/)) {
         var message = getSearchString(msg.content);;
         wiki.makeRequest(message, 'pedia', response => embedMessage(msg, parseWikiResponse(response), 'Bropedia'));
         return;
@@ -60,7 +63,7 @@ client.on('message', msg => {
         var message = getSearchString(msg.content);
         msg.reply('acesse https://github.com/Zack-Correa/RagWikiBot/blob/dev/README_PT-BR.md para ler os comandos disponiveis!');
         return;
-    }
+    }*/
 });
 
 client.login(authToken);

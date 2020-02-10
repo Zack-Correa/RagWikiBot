@@ -3,7 +3,7 @@ const settings = require('../const.json');
 require('dotenv/config');
 
 
-function makeItemIdRequest(itemId, server, callback) {
+function makeItemIdRequest(itemId, server) {
 
     var itemEndpoint = settings.endpoints[2].url;
 
@@ -14,9 +14,14 @@ function makeItemIdRequest(itemId, server, callback) {
     request(options, (error, response, body) => {
         if(error) {
             console.log(error);
-        }    
-        return callback(body, itemId);   
+        }   
+        
     });
+    
+    return new Promise((resolve, reject) => {
+        resolve(body, itemId);
+    }) 
+    
 }
 
 function makeSearchQuery(quereableString, server, callback) {
