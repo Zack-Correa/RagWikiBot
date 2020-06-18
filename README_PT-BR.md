@@ -1,6 +1,6 @@
 # RagWiki
 
-RagWiki é um bot para consultar itens, quests e mais em varias Wiki/Databases do Ragnarok Online
+RagWiki é um bot para consultar itens, quests e mais em varias Wiki/Databases do Ragnarok Online.
 
 
 ## Funcionalidades
@@ -23,17 +23,19 @@ A funcionalidade ```pedia``` retorna todos os resultados encontrados no projeto 
 
 >%buscaritem NOME_DO_ITEM
 
-A funcionalidade ```buscaritem ``` retorna todos os resultados encontrados para o item desejado na database [Divine-Pride](https://www.divine-pride.net/database/item).
+A funcionalidade ```buscaritem``` retorna todos os resultados encontrados para o item desejado na database [Divine-Pride](https://www.divine-pride.net/database/item).
 
 >%buscaritemid ID_DO_ITEM SIGLA_DO_SERVIDOR
 
-A funcionalidade ```buscaritem ``` retorna a descrição do item desejado no servidor desejado (opcional) de acordo com a database [Divine-Pride](https://www.divine-pride.net/database/item).
+A funcionalidade ```buscaritem``` retorna a descrição do item desejado no servidor desejado (opcional) de acordo com a database [Divine-Pride](https://www.divine-pride.net/database/item).
 
 
 
 
 ## Contribuições
 Pull requests são bem-vindas. Para mudanças maiores, por favor, abram uma issue primeiramente para discutir o que você gostaria de mudar.
+
+Tenho relativamente pouca experiência com JS e menos ainda com Node, então fico aberto a mudanças estruturais a fim de aumentar a clareza do código.
 
 ## Licença
 [MIT](https://choosealicense.com/licenses/mit/)
