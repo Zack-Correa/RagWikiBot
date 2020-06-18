@@ -1,26 +1,20 @@
 const request = require("request");
 const settings = require('../const.json');
+const bent = require('bent');
+const getJSON = bent('json');
 require('dotenv/config');
 
 
-function makeItemIdRequest(itemId, server) {
+async function makeItemIdRequest(itemId, server, callback) {
 
     var itemEndpoint = settings.endpoints[2].url;
 
     //Set item request endpoint
     itemEndpoint += String(itemId) + '?apiKey=' + process.env.DIVINE_PRIDE_API_KEY + '&server=' + server;
 
-    let options = {method: 'GET', url: itemEndpoint};
-    request(options, (error, response, body) => {
-        if(error) {
-            console.log(error);
-        }   
-        
-    });
-    
-    return new Promise((resolve, reject) => {
-        resolve(body, itemId);
-    }) 
+    //let options = {method: 'GET', url: itemEndpoint};
+    let obj = await getJSON(itemEndpoint);
+    return callback(obj);
     
 }
 
@@ -29,6 +23,7 @@ function makeSearchQuery(quereableString, server, callback) {
     let cookie;
     const j = request.jar();
     let serverMap = {
+        "undefined" : () => cookie = undefined,
         "iro": () => cookie = undefined,
         "kro": () => cookie = request.cookie('lang=kr'),
         "bro": () => cookie = request.cookie('lang=pt'),
@@ -56,7 +51,7 @@ function makeSearchQuery(quereableString, server, callback) {
         if(error) {
             console.log(error);
         }
-        
+     
         //Parses the HTML
         let regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
         if(body.match(regexp) != undefined) {
