@@ -22,7 +22,7 @@ client.on('ready', () => {
 
 client.on('message', msg => {
     if (msg.author.bot) return;
-    new messageHandler().getAction(msg, (response) =>  msg.reply(response));
+    new messageHandler().getAction(msg).then((response) =>  msg.reply(response));
 });
 
 client.login(authToken);
