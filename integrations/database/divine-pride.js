@@ -1,5 +1,6 @@
 const request = require("request");
 const settings = require('../const.json');
+const htmlHander = require('../../handlers/htmlHandler');
 const bent = require('bent');
 const getJSON = bent('json');
 require('dotenv/config');
@@ -23,7 +24,7 @@ function makeSearchQuery(quereableString, server, callback) {
     let cookie;
     const j = request.jar();
     let serverMap = {
-        "undefined" : () => cookie = undefined,
+        "undefined" : () => cookie = request.cookie('lang=pt'),
         "iro": () => cookie = undefined,
         "kro": () => cookie = request.cookie('lang=kr'),
         "bro": () => cookie = request.cookie('lang=pt'),
@@ -53,11 +54,7 @@ function makeSearchQuery(quereableString, server, callback) {
         }
      
         //Parses the HTML
-        let regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
-        if(body.match(regexp) != undefined) {
-            return callback(body.match(regexp).toString().split("<td>"));
-        }
-        return callback('ERROR');
+        return callback(htmlHander.parseHTMLByRegex(body)??  'ERROR');
     });
 }
     

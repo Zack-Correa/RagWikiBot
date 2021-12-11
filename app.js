@@ -1,7 +1,4 @@
 const Discord = require('discord.js');
-const wiki = require('./integrations/wikis/wikiRequests.js');
-const divinePride = require('./integrations/database/divine-pride.js');
-const settings = require('./integrations/const.json');
 const messageHandler = require('./handlers/messageHandler.js');
 require('dotenv/config');
 
