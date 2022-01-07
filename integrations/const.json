@@ -27,6 +27,24 @@
         },
         {
             "url": "https://www.divine-pride.net/Api/Regions/SetServer/"
+        },
+        {
+            "url": "https://www.divine-pride.net/api/database/Monster/",
+            "params": {
+                "server": ""
+            }
+        },
+        {
+            "url": "https://www.divine-pride.net/api/database/Map/",
+            "params": {
+                "server": ""
+            }
+        },
+        {
+            "url": "https://www.divine-pride.net/api/database/Skill/",
+            "params": {
+                "server": ""
+            }
         }
     ],
     "assets": [

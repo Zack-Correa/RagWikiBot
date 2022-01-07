@@ -68,10 +68,77 @@ function makeSearchQuery(quereableString, server) {
         });
     });
 }
+
+function monsterSearch(monsterId) {
+    return new Promise(async (resolve, reject) => {
+        let mapEndpoint = settings.endpoints[5].url;
+        mapEndpoint += String(monsterId) + '?apiKey=' + process.env.DIVINE_PRIDE_API_KEY;
+
+        let options = {method: 'GET', url: mapEndpoint, mapEndpoint};
+        
+        request(options, (error, response, body) => {
+            //Error handling
+            if(error) {
+                console.log(error);
+            }
+        
+            //Parses the HTML
+            console.log(body);
+            return;
+            //return parsedBody? resolve(parsedBody) : reject('ERROR');
+        });
+    });
+}
+
+function mapSearch(mapId) {
+    return new Promise(async (resolve, reject) => {
+        let mapEndpoint = settings.endpoints[6].url;
+        mapEndpoint += String(mapId) + '?apiKey=' + process.env.DIVINE_PRIDE_API_KEY;
+
+        let options = {method: 'GET', url: mapEndpoint, mapEndpoint};
+        
+        request(options, (error, response, body) => {
+            //Error handling
+            if(error) {
+                console.log(error);
+            }
+        
+            //Parses the HTML
+            console.log(body);
+            return;
+            //return parsedBody? resolve(parsedBody) : reject('ERROR');
+        });
+    });
+}
+
+function skillSearch(skillId) {
+    return new Promise(async (resolve, reject) => {
+        let mapEndpoint = settings.endpoints[6].url;
+        mapEndpoint += String(skillId) + '?apiKey=' + process.env.DIVINE_PRIDE_API_KEY;
+
+        let options = {method: 'GET', url: mapEndpoint, mapEndpoint};
+        
+        request(options, (error, response, body) => {
+            //Error handling
+            if(error) {
+                console.log(error);
+            }
+        
+            //Parses the HTML
+            console.log(body);
+            return;
+            //return parsedBody? resolve(parsedBody) : reject('ERROR');
+        });
+    });
+}
     
 
 
 module.exports = {
     makeItemIdRequest,
-    makeSearchQuery
+    makeSearchQuery,
+    monsterSearch,
+    mapSearch,
+    skillSearch
+
 }

@@ -68,6 +68,7 @@ var messageHandler = function() {
                     '%buscaritemid': () => resolve(this.searchItemID(this.splitedMessage)),
                     '%wiki' : () => resolve(this.searchWiki(this.splitedMessage[1], 'wiki')),
                     '%buscaritem': () => resolve(this.searchItem(this.splitedMessage, message)),
+                    '%buscarmonstroid': () => resolve(this.getMonsterInfo(this.splitedMessage)),
                     '%ajuda' : () => resolve('acesse https://github.com/Zack-Correa/RagWikiBot/blob/dev/README_PT-BR.md para ler os comandos disponiveis!')
                 }
 
@@ -90,6 +91,13 @@ var messageHandler = function() {
                 return reject("Erro ao executar ação!");
             }
         });
+    }
+
+    this.getMonsterInfo = function(splitedMessage) {
+        return divinePride.monsterSearch(splitedMessage[1]);
+        /* .then((response) => parser.parseDatabaseResponse(response, splitedMessage[1]))
+        .then(message => {return message})
+        .catch((error) => {return error}); */
     }
 }
 
