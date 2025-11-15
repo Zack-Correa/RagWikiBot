@@ -15,8 +15,113 @@ const ENDPOINTS = {
     SEARCH: settings.endpoints[2].url,
     MONSTER: settings.endpoints[4].url,
     MAP: settings.endpoints[5].url,
-    SKILL: settings.endpoints[6].url
+    SKILL: settings.endpoints[6].url,
+    SET_SERVER: 'https://www.divine-pride.net/Api/Regions/SetServer',
+    REFRESH_LANGUAGE: 'https://www.divine-pride.net/Api/Regions/RefreshLanguage/'
 };
+
+// Cookie cache for web scraping
+// Format: { 'language-server': { cookies: 'cookie_string', timestamp: Date } }
+const cookieCache = new Map();
+const COOKIE_CACHE_TTL = 1800000; // 30 minutes
+
+/**
+ * Extracts cookies from axios response headers
+ * @param {Object} response - Axios response object
+ * @returns {string} Cookie string
+ */
+function extractCookies(response) {
+    const cookies = response.headers['set-cookie'];
+    if (!cookies || !Array.isArray(cookies)) {
+        return '';
+    }
+    
+    // Extract only the cookie name=value pairs, ignoring attributes
+    return cookies.map(cookie => {
+        const cookieParts = cookie.split(';')[0]; // Get only name=value part
+        return cookieParts.trim();
+    }).join('; ');
+}
+
+/**
+ * Sets up Divine Pride server and language cookies for web scraping
+ * @param {string} language - Language code (pt-br, en, es)
+ * @returns {Promise<string>} Cookie string to use in requests
+ */
+async function setupScrapingCookies(language) {
+    const cacheKey = `${language}-latam`;
+    
+    // Check if we have valid cached cookies
+    const cached = cookieCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < COOKIE_CACHE_TTL) {
+        logger.debug('Using cached cookies', { language, cacheKey });
+        return cached.cookies;
+    }
+    
+    try {
+        // Step 1: Set server to LATAM (bRO)
+        logger.debug('Setting Divine Pride server to LATAM', { language });
+        const serverResponse = await axios.post(
+            ENDPOINTS.SET_SERVER,
+            { server: 'bro' }, // Always use LATAM
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000
+            }
+        );
+        
+        let cookies = extractCookies(serverResponse);
+        
+        // Step 2: Refresh language
+        logger.debug('Refreshing Divine Pride language', { language });
+        const languageConfig = config.languages[language.toLowerCase()];
+        if (!languageConfig) {
+            logger.warn('Invalid language, using default pt-br', { language });
+        }
+        
+        const languageResponse = await axios.post(
+            ENDPOINTS.REFRESH_LANGUAGE,
+            { language: language.toLowerCase() },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Cookie': cookies
+                },
+                timeout: 10000
+            }
+        );
+        
+        // Merge cookies from both requests
+        const languageCookies = extractCookies(languageResponse);
+        if (languageCookies) {
+            cookies = cookies ? `${cookies}; ${languageCookies}` : languageCookies;
+        }
+        
+        // Cache the cookies
+        cookieCache.set(cacheKey, {
+            cookies: cookies,
+            timestamp: Date.now()
+        });
+        
+        logger.debug('Divine Pride cookies configured', { 
+            language, 
+            cacheKey,
+            hasCookies: !!cookies 
+        });
+        
+        return cookies;
+    } catch (error) {
+        logger.error('Error setting up Divine Pride cookies', { 
+            language, 
+            error: error.message 
+        });
+        
+        // Return empty string on error, allowing scraping to proceed without cookies
+        return '';
+    }
+}
 
 /**
  * Validates server parameter
@@ -332,31 +437,33 @@ async function skillSearch(skillId, server = null) {
 /**
  * Makes a search query for monsters by name
  * @param {string} queryString - Search term
- * @param {string} server - Server identifier
+ * @param {string} language - Language code (pt-br, en, es)
  * @returns {Promise<Array>} Parsed HTML results
  * @throws {APIError} If request fails
  */
-async function makeMonsterSearchQuery(queryString, server) {
-    if (!queryString || !server) {
-        throw new Error('Termo de busca e servidor são obrigatórios');
-    }
-
-    const langCookie = getServerLanguage(server);
-    const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
-    
-    const requestConfig = {
-        method: 'GET',
-        url: queryEndpoint,
-        headers: {},
-        timeout: 10000
-    };
-
-    if (langCookie) {
-        requestConfig.headers['Cookie'] = langCookie;
+async function makeMonsterSearchQuery(queryString, language) {
+    if (!queryString || !language) {
+        throw new Error('Termo de busca e idioma são obrigatórios');
     }
 
     try {
-        logger.debug('Searching monsters', { queryString, server });
+        // Setup cookies for the correct server and language
+        const cookies = await setupScrapingCookies(language);
+        
+        const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
+        
+        const requestConfig = {
+            method: 'GET',
+            url: queryEndpoint,
+            headers: {},
+            timeout: 10000
+        };
+
+        if (cookies) {
+            requestConfig.headers['Cookie'] = cookies;
+        }
+
+        logger.debug('Searching monsters', { queryString, language, hasCookies: !!cookies });
         const response = await axios(requestConfig);
         
         if (!response.data) {
@@ -369,7 +476,7 @@ async function makeMonsterSearchQuery(queryString, server) {
         if (!parsedBody) {
             logger.warn('No monster results from HTML parsing', { 
                 queryString, 
-                server,
+                language,
                 responseLength: response.data?.length || 0
             });
             throw new APIError('Nenhum resultado encontrado', 200, 'Nenhum monstro encontrado para sua busca.');
@@ -377,12 +484,13 @@ async function makeMonsterSearchQuery(queryString, server) {
 
         logger.debug('Monster HTML parsed successfully', {
             queryString,
+            language,
             parsedBodyLength: parsedBody.length
         });
 
         return parsedBody;
     } catch (error) {
-        logger.error('Error searching monsters', { queryString, server, error: error.message });
+        logger.error('Error searching monsters', { queryString, language, error: error.message });
         
         if (error.response) {
             throw new APIError(
@@ -407,31 +515,33 @@ async function makeMonsterSearchQuery(queryString, server) {
 /**
  * Makes a search query for maps by name
  * @param {string} queryString - Search term
- * @param {string} server - Server identifier
+ * @param {string} language - Language code (pt-br, en, es)
  * @returns {Promise<Array>} Parsed HTML results
  * @throws {APIError} If request fails
  */
-async function makeMapSearchQuery(queryString, server) {
-    if (!queryString || !server) {
-        throw new Error('Termo de busca e servidor são obrigatórios');
-    }
-
-    const langCookie = getServerLanguage(server);
-    const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
-    
-    const requestConfig = {
-        method: 'GET',
-        url: queryEndpoint,
-        headers: {},
-        timeout: 10000
-    };
-
-    if (langCookie) {
-        requestConfig.headers['Cookie'] = langCookie;
+async function makeMapSearchQuery(queryString, language) {
+    if (!queryString || !language) {
+        throw new Error('Termo de busca e idioma são obrigatórios');
     }
 
     try {
-        logger.debug('Searching maps', { queryString, server });
+        // Setup cookies for the correct server and language
+        const cookies = await setupScrapingCookies(language);
+        
+        const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
+        
+        const requestConfig = {
+            method: 'GET',
+            url: queryEndpoint,
+            headers: {},
+            timeout: 10000
+        };
+
+        if (cookies) {
+            requestConfig.headers['Cookie'] = cookies;
+        }
+
+        logger.debug('Searching maps', { queryString, language, hasCookies: !!cookies });
         const response = await axios(requestConfig);
         
         if (!response.data) {
@@ -444,7 +554,7 @@ async function makeMapSearchQuery(queryString, server) {
         if (!parsedBody) {
             logger.warn('No map results from HTML parsing', { 
                 queryString, 
-                server,
+                language,
                 responseLength: response.data?.length || 0
             });
             throw new APIError('Nenhum resultado encontrado', 200, 'Nenhum mapa encontrado para sua busca.');
@@ -452,12 +562,13 @@ async function makeMapSearchQuery(queryString, server) {
 
         logger.debug('Map HTML parsed successfully', {
             queryString,
+            language,
             parsedBodyLength: parsedBody.length
         });
 
         return parsedBody;
     } catch (error) {
-        logger.error('Error searching maps', { queryString, server, error: error.message });
+        logger.error('Error searching maps', { queryString, language, error: error.message });
         
         if (error.response) {
             throw new APIError(

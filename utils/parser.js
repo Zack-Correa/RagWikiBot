@@ -453,9 +453,11 @@ function parseDatabaseResponse(response, itemId, language = 'pt-br') {
  * Parses database search response (HTML)
  * @param {string} searchedWord - Original search term
  * @param {Array<string>} response - Parsed HTML response array
+ * @param {string} language - Language code for translations (default: 'pt-br')
  * @returns {Promise<Array<string>>} Parsed response with search term and results
  */
-function parseDatabaseBodyResponse(searchedWord, response) {
+function parseDatabaseBodyResponse(searchedWord, response, language = 'pt-br') {
+    const t = i18n.getLanguage(language);
     return new Promise((resolve, reject) => {
         if (!searchedWord) {
             return reject(new ValidationError('Termo de busca não fornecido', 'Termo de busca é obrigatório.'));
@@ -513,6 +515,22 @@ function parseDatabaseBodyResponse(searchedWord, response) {
                             .replace(/&gt;/g, '>')
                             .trim();
 
+                        // Filter out placeholder/invalid names
+                        const invalidPatterns = [
+                            /we don't have this yet/i,
+                            /sem dados ainda/i,
+                            /no data yet/i,
+                            /sin datos todavía/i,
+                            /^\s*:\(/,  // Just emoticons
+                            /^\s*\?\s*$/  // Just question marks
+                        ];
+                        
+                        const isInvalid = invalidPatterns.some(pattern => pattern.test(itemName));
+                        if (isInvalid) {
+                            logger.debug('Skipping invalid/placeholder item name', { itemName });
+                            continue;
+                        }
+
                         const itemId = idMatch[1];
                         const itemURL = `https://www.divine-pride.net/database/item/${itemId}`;
 
@@ -544,7 +562,7 @@ function parseDatabaseBodyResponse(searchedWord, response) {
             });
 
             // Add full search URL at the end
-            const searchURL = `\n\n[🔍 Pesquisa completa](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
+            const searchURL = `\n\n[${t.search.fullSearch}](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
             parsedResponse.push(searchURL);
 
             // Check if we found any items (parsedResponse should have: searchedWord + items + searchURL)
@@ -579,11 +597,13 @@ function parseDatabaseBodyResponse(searchedWord, response) {
  * Parses search results for monsters
  * @param {string} searchedWord - The search term
  * @param {Array} response - Array of parsed HTML fragments
- * @param {string} server - Server identifier for MVP checking
+ * @param {string} language - Language code for translations (default: 'pt-br')
  * @returns {Promise<Array>} Formatted results array
  */
-function parseMonsterSearchBodyResponse(searchedWord, response, server = null) {
+function parseMonsterSearchBodyResponse(searchedWord, response, language = 'pt-br') {
     return new Promise(async (resolve, reject) => {
+        const t = i18n.getLanguage(language);
+        
         if (!searchedWord) {
             return reject(new ValidationError('Termo de busca não fornecido', 'Termo de busca é obrigatório.'));
         }
@@ -670,6 +690,22 @@ function parseMonsterSearchBodyResponse(searchedWord, response, server = null) {
                             monsterName.toLowerCase().includes('unknown') ||
                             monsterName === 'N/A' ||
                             monsterName === '?') {
+                            continue;
+                        }
+                        
+                        // Filter out "We don't have this yet" and similar placeholders
+                        const invalidPatterns = [
+                            /we don't have this yet/i,
+                            /sem dados ainda/i,
+                            /no data yet/i,
+                            /sin datos todavía/i,
+                            /^\s*:\(/,  // Just emoticons
+                            /^\s*\?\s*$/  // Just question marks
+                        ];
+                        
+                        const isInvalid = invalidPatterns.some(pattern => pattern.test(monsterName));
+                        if (isInvalid) {
+                            logger.debug('Skipping invalid/placeholder monster name', { monsterName });
                             continue;
                         }
 
@@ -765,7 +801,7 @@ function parseMonsterSearchBodyResponse(searchedWord, response, server = null) {
                 });
             }
 
-            const searchURL = `\n\n[🔍 Pesquisa completa](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
+            const searchURL = `\n\n[${t.search.fullSearch}](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
             parsedResponse.push(searchURL);
 
             logger.debug('Monster search parsed successfully', { 
@@ -788,10 +824,13 @@ function parseMonsterSearchBodyResponse(searchedWord, response, server = null) {
  * Parses search results for maps
  * @param {string} searchedWord - The search term
  * @param {Array} response - Array of parsed HTML fragments
+ * @param {string} language - Language code for translations (default: 'pt-br')
  * @returns {Promise<Array>} Formatted results array
  */
-function parseMapSearchBodyResponse(searchedWord, response) {
+function parseMapSearchBodyResponse(searchedWord, response, language = 'pt-br') {
     return new Promise((resolve, reject) => {
+        const t = i18n.getLanguage(language);
+        
         if (!searchedWord) {
             return reject(new ValidationError('Termo de busca não fornecido', 'Termo de busca é obrigatório.'));
         }
@@ -879,6 +918,22 @@ function parseMapSearchBodyResponse(searchedWord, response) {
                             mapName === '?') {
                             continue;
                         }
+                        
+                        // Filter out "We don't have this yet" and similar placeholders
+                        const invalidPatterns = [
+                            /we don't have this yet/i,
+                            /sem dados ainda/i,
+                            /no data yet/i,
+                            /sin datos todavía/i,
+                            /^\s*:\(/,  // Just emoticons
+                            /^\s*\?\s*$/  // Just question marks
+                        ];
+                        
+                        const isInvalid = invalidPatterns.some(pattern => pattern.test(mapName));
+                        if (isInvalid) {
+                            logger.debug('Skipping invalid/placeholder map name', { mapName });
+                            continue;
+                        }
 
                         const mapId = idMatch[1];
                         const mapURL = `https://www.divine-pride.net/database/map/${mapId}`;
@@ -925,7 +980,7 @@ function parseMapSearchBodyResponse(searchedWord, response) {
                 mapsFound: mapsFound
             });
 
-            const searchURL = `\n\n[🔍 Pesquisa completa](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
+            const searchURL = `\n\n[${t.search.fullSearch}](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
             parsedResponse.push(searchURL);
 
             if (parsedResponse.length <= 2 || mapsFound === 0) {

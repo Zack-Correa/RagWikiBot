@@ -7,6 +7,8 @@
 		"start": "node app.js",
 		"dev": "node app.js",
 		"deploy": "node deploy-commands.js",
+		"reset": "node reset-commands.js",
+		"reset:deploy": "node reset-commands.js --deploy",
 		"list-guilds": "node list-guilds.js",
 		"test": "echo \"Error: no test specified\" && exit 1"
 	},

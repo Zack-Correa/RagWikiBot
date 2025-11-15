@@ -45,7 +45,7 @@ module.exports = {
 
         try {
             const body = await divinePride.makeSearchQuery(searchTerm, language);
-            const parsedBody = await parser.parseDatabaseBodyResponse(searchTerm, body);
+            const parsedBody = await parser.parseDatabaseBodyResponse(searchTerm, body, language);
             
             const thumbnail = settings.assets[1].url;
             const searchedWord = parsedBody[0] || t.search.noResults;
