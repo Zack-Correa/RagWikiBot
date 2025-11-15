@@ -38,11 +38,13 @@ module.exports = {
             baseUrl: 'https://www.divine-pride.net'
         }
     },
-    servers: {
-        iro: { lang: undefined, acceptLanguage: 'en-US' },
-        kro: { lang: 'lang=kr', acceptLanguage: 'ko-KR' },
-        bro: { lang: 'lang=pt', acceptLanguage: 'pt-BR' },
-        jro: { lang: 'lang=jp', acceptLanguage: 'ja-JP' }
-    }
+    // Divine Pride sempre usa servidor LATAM
+    // Apenas a linguagem pode ser selecionada
+    languages: {
+        'pt-br': { lang: 'lang=pt', acceptLanguage: 'pt-BR', displayName: 'Português (Brasil)' },
+        'en': { lang: undefined, acceptLanguage: 'en-US', displayName: 'English' },
+        'es': { lang: 'lang=es', acceptLanguage: 'es-ES', displayName: 'Español' }
+    },
+    defaultLanguage: 'pt-br'
 };
 

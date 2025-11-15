@@ -9,13 +9,14 @@ const divinePride = require('../integrations/database/divine-pride');
 const settings = require('../integrations/const.json');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
+const config = require('../config');
 const { ValidationError, CommandError } = require('../utils/errors');
 const { createPaginatedEmbed, setupPagination } = require('../utils/pagination');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('buscar-monstro-nome')
-        .setDescription('Busca monstros pelo nome no banco de dados Divine Pride')
+        .setDescription('Busca monstros pelo nome no banco de dados Divine Pride (servidor LATAM)')
         .addStringOption(option =>
             option
                 .setName('nome')
@@ -24,14 +25,13 @@ module.exports = {
         )
         .addStringOption(option =>
             option
-                .setName('servidor')
-                .setDescription('Servidor (iro, kro, bro, jro)')
-                .setRequired(true)
+                .setName('idioma')
+                .setDescription('Idioma da busca (padrão: Português)')
+                .setRequired(false)
                 .addChoices(
-                    { name: 'iRO', value: 'iro' },
-                    { name: 'kRO', value: 'kro' },
-                    { name: 'bRO', value: 'bro' },
-                    { name: 'jRO', value: 'jro' }
+                    { name: 'Português (Brasil)', value: 'pt-br' },
+                    { name: 'English', value: 'en' },
+                    { name: 'Español', value: 'es' }
                 )
         ),
 
@@ -39,11 +39,11 @@ module.exports = {
         await interaction.deferReply();
 
         const searchTerm = interaction.options.getString('nome');
-        const server = interaction.options.getString('servidor');
+        const language = interaction.options.getString('idioma') || config.defaultLanguage;
 
         try {
-            const body = await divinePride.makeMonsterSearchQuery(searchTerm, server);
-            const parsedBody = await parser.parseMonsterSearchBodyResponse(searchTerm, body, server);
+            const body = await divinePride.makeMonsterSearchQuery(searchTerm, language);
+            const parsedBody = await parser.parseMonsterSearchBodyResponse(searchTerm, body, language);
             
             const thumbnail = settings.assets[1].url;
             const searchedWord = parsedBody[0] || 'Nenhum termo';
@@ -164,7 +164,7 @@ module.exports = {
                 try {
                     const mvpCheckPromises = monsterIdsToCheck.map(async (id) => {
                         try {
-                            const monsterData = await divinePride.monsterSearch(id, server);
+                            const monsterData = await divinePride.monsterSearch(id, language);
                             const isMvp = monsterData?.stats?.mvp === 1;
                             return { id, isMvp };
                         } catch {
@@ -242,7 +242,7 @@ module.exports = {
                     await selectInteraction.deferReply({ flags: MessageFlags.Ephemeral });
                     
                     // Fetch monster details
-                    const response = await divinePride.monsterSearch(monsterId, server);
+                    const response = await divinePride.monsterSearch(monsterId, language);
                     const monsterInfo = await parser.parseMonsterResponse(response, monsterId);
                     
                     const monsterThumbnail = settings.assets[1].url;
@@ -277,7 +277,7 @@ module.exports = {
 
             return;
         } catch (error) {
-            logger.error('Error searching monster by name', { searchTerm, server, error: error.message });
+            logger.error('Error searching monster by name', { searchTerm, language, error: error.message });
             
             if (error instanceof ValidationError || error instanceof CommandError) {
                 return interaction.editReply(`❌ ${error.userMessage}`);

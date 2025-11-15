@@ -25,11 +25,11 @@ const ENDPOINTS = {
  * @throws {ValidationError} If server is invalid
  */
 function getServerLanguage(server) {
-    const serverConfig = config.servers[server.toLowerCase()];
-    if (!serverConfig) {
-        throw new Error(`Servidor inválido: ${server}. Servidores disponíveis: ${Object.keys(config.servers).join(', ')}`);
+    const languageConfig = config.languages[server.toLowerCase()];
+    if (!languageConfig) {
+        throw new Error(`Idioma inválido: ${server}. Idiomas disponíveis: ${Object.keys(config.languages).join(', ')}`);
     }
-    return serverConfig.lang;
+    return languageConfig.lang;
 }
 
 /**
@@ -50,8 +50,8 @@ async function makeItemIdRequest(itemId, server) {
     }
 
     const endpoint = `${ENDPOINTS.ITEM}${itemId}?apiKey=${apiKey}&server=${server}`;
-    const serverConfig = config.servers[server.toLowerCase()];
-    const acceptLanguage = serverConfig?.acceptLanguage;
+    const languageConfig = config.languages[server.toLowerCase()];
+    const acceptLanguage = languageConfig?.acceptLanguage;
 
     try {
         logger.debug('Fetching item by ID', { itemId, server, acceptLanguage });
@@ -175,9 +175,9 @@ async function monsterSearch(monsterId, server = null) {
     // Get language preference based on server or default
     let acceptLanguage = 'pt-BR'; // Default to Portuguese
     if (server) {
-        const serverConfig = config.servers[server.toLowerCase()];
-        if (serverConfig?.acceptLanguage) {
-            acceptLanguage = serverConfig.acceptLanguage;
+        const languageConfig = config.languages[server.toLowerCase()];
+        if (languageConfig?.acceptLanguage) {
+            acceptLanguage = languageConfig.acceptLanguage;
         }
     } else {
         // Use environment variable or default
@@ -238,9 +238,9 @@ async function mapSearch(mapId, server = null) {
     // Get language preference based on server or default
     let acceptLanguage = 'pt-BR'; // Default to Portuguese
     if (server) {
-        const serverConfig = config.servers[server.toLowerCase()];
-        if (serverConfig?.acceptLanguage) {
-            acceptLanguage = serverConfig.acceptLanguage;
+        const languageConfig = config.languages[server.toLowerCase()];
+        if (languageConfig?.acceptLanguage) {
+            acceptLanguage = languageConfig.acceptLanguage;
         }
     } else {
         // Use environment variable or default
@@ -298,9 +298,9 @@ async function skillSearch(skillId, server = null) {
     // Get language preference based on server or default
     let acceptLanguage = 'pt-BR'; // Default to Portuguese
     if (server) {
-        const serverConfig = config.servers[server.toLowerCase()];
-        if (serverConfig?.acceptLanguage) {
-            acceptLanguage = serverConfig.acceptLanguage;
+        const languageConfig = config.languages[server.toLowerCase()];
+        if (languageConfig?.acceptLanguage) {
+            acceptLanguage = languageConfig.acceptLanguage;
         }
     } else {
         // Use environment variable or default

@@ -1,18 +1,19 @@
 /**
  * Slash Command: /buscar-item-id
- * Searches for an item by ID in the Divine Pride database
+ * Searches for an item by ID in the Divine Pride database (LATAM server)
  */
 
 const { SlashCommandBuilder } = require('discord.js');
 const divinePride = require('../integrations/database/divine-pride');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
+const config = require('../config');
 const { ValidationError, CommandError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('buscar-item-id')
-        .setDescription('Busca um item pelo ID no banco de dados Divine Pride')
+        .setDescription('Busca um item pelo ID no banco de dados Divine Pride (servidor LATAM)')
         .addStringOption(option =>
             option
                 .setName('id')
@@ -21,14 +22,13 @@ module.exports = {
         )
         .addStringOption(option =>
             option
-                .setName('servidor')
-                .setDescription('Servidor (iro, kro, bro, jro)')
-                .setRequired(true)
+                .setName('idioma')
+                .setDescription('Idioma da busca (padrão: Português)')
+                .setRequired(false)
                 .addChoices(
-                    { name: 'iRO', value: 'iro' },
-                    { name: 'kRO', value: 'kro' },
-                    { name: 'bRO', value: 'bro' },
-                    { name: 'jRO', value: 'jro' }
+                    { name: 'Português (Brasil)', value: 'pt-br' },
+                    { name: 'English', value: 'en' },
+                    { name: 'Español', value: 'es' }
                 )
         ),
 
@@ -36,7 +36,7 @@ module.exports = {
         await interaction.deferReply();
 
         const itemId = interaction.options.getString('id');
-        const server = interaction.options.getString('servidor');
+        const language = interaction.options.getString('idioma') || config.defaultLanguage;
 
         // Validate item ID
         if (!/^\d+$/.test(itemId)) {
@@ -44,12 +44,12 @@ module.exports = {
         }
 
         try {
-            const response = await divinePride.makeItemIdRequest(itemId, server);
+            const response = await divinePride.makeItemIdRequest(itemId, language);
             const result = await parser.parseDatabaseResponse(response, itemId);
             const resultWithCredit = `${result}\n\n*Conteúdo fornecido por Divine Pride (https://www.divine-pride.net)*`;
             return interaction.editReply(resultWithCredit);
         } catch (error) {
-            logger.error('Error searching item by ID', { itemId, server, error: error.message });
+            logger.error('Error searching item by ID', { itemId, language, error: error.message });
             
             if (error instanceof ValidationError || error instanceof CommandError) {
                 return interaction.editReply(`❌ ${error.userMessage}`);
