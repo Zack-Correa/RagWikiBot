@@ -11,6 +11,7 @@ const settings = require('../integrations/const.json');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
 const config = require('../config');
+const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 const { createPaginatedEmbed, setupPagination } = require('../utils/pagination');
 
@@ -41,13 +42,14 @@ module.exports = {
 
         const searchTerm = interaction.options.getString('nome');
         const language = interaction.options.getString('idioma') || config.defaultLanguage;
+        const t = i18n.getLanguage(language);
 
         try {
             const body = await divinePride.makeMapSearchQuery(searchTerm, language);
             const parsedBody = await parser.parseMapSearchBodyResponse(searchTerm, body);
             
             const thumbnail = settings.assets[1].url;
-            const searchedWord = parsedBody[0] || 'Nenhum termo';
+            const searchedWord = parsedBody[0] || t.search.noResults;
             const results = parsedBody.slice(1); // Remove search term, keep all results
 
             // Separate search URL from results
@@ -59,15 +61,15 @@ module.exports = {
                 const { EmbedBuilder } = require('discord.js');
                 const embed = new EmbedBuilder()
                     .setColor('#0099ff')
-                    .setTitle('Resultado da pesquisa de mapas')
+                    .setTitle(t.search.titleMaps)
                     .setThumbnail(thumbnail)
                     .addFields({ 
-                        name: `Resultados para "${searchedWord}"`, 
-                        value: 'Nenhum resultado encontrado'
+                        name: `${t.search.resultsFor} "${searchedWord}"`, 
+                        value: t.search.noResults
                     })
                     .addFields({
                         name: '\u200b',
-                        value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                        value: t.credits.divinePride
                     })
                     .setTimestamp();
 
@@ -78,7 +80,7 @@ module.exports = {
             const paginationData = createPaginatedEmbed({
                 items: mapResults,
                 itemsPerPage: 10,
-                title: 'Resultado da pesquisa de mapas',
+                title: t.search.titleMaps,
                 thumbnail: thumbnail,
                 searchTerm: searchedWord,
                 searchURL: searchURL,
@@ -167,7 +169,7 @@ module.exports = {
             if (mapOptions.length > 0) {
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('map_details_menu')
-                    .setPlaceholder('Ver detalhes de um mapa')
+                    .setPlaceholder(t.search.selectPlaceholderMap)
                     .addOptions(mapOptions);
 
                 const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -200,7 +202,7 @@ module.exports = {
                     
                     // Fetch map details
                     const response = await divinePride.mapSearch(mapId, language);
-                    const mapInfo = await parser.parseMapResponse(response, mapId);
+                    const mapInfo = await parser.parseMapResponse(response, mapId, language);
                     
                     // Try to get map image
                     let mapImage = null;
@@ -226,12 +228,12 @@ module.exports = {
                     const mapThumbnail = settings.assets[1].url;
                     const detailEmbed = new EmbedBuilder()
                         .setColor('#0099ff')
-                        .setTitle('Informações do Mapa')
+                        .setTitle(t.map.title)
                         .setThumbnail(mapThumbnail)
                         .setDescription(mapInfo)
                         .addFields({
                             name: '\u200b',
-                            value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                            value: t.credits.divinePride
                         })
                         .setTimestamp();
                     
@@ -243,7 +245,7 @@ module.exports = {
                 } catch (error) {
                     logger.error('Error showing map details', { error: error.message });
                     await selectInteraction.editReply({
-                        content: '❌ Erro ao buscar detalhes do mapa.'
+                        content: t.errors.mapDetails
                     }).catch(() => {});
                 }
             });
@@ -262,7 +264,7 @@ module.exports = {
                 return interaction.editReply(`❌ ${error.userMessage}`);
             }
             
-            return interaction.editReply('❌ Não foi possível buscar o mapa solicitado.');
+            return interaction.editReply(t.errors.mapNotFound);
         }
     }
 };

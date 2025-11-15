@@ -10,6 +10,7 @@ const settings = require('../integrations/const.json');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
 const config = require('../config');
+const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 const { createPaginatedEmbed, setupPagination } = require('../utils/pagination');
 
@@ -40,13 +41,14 @@ module.exports = {
 
         const searchTerm = interaction.options.getString('nome');
         const language = interaction.options.getString('idioma') || config.defaultLanguage;
+        const t = i18n.getLanguage(language);
 
         try {
             const body = await divinePride.makeSearchQuery(searchTerm, language);
             const parsedBody = await parser.parseDatabaseBodyResponse(searchTerm, body);
             
             const thumbnail = settings.assets[1].url;
-            const searchedWord = parsedBody[0] || 'Nenhum termo';
+            const searchedWord = parsedBody[0] || t.search.noResults;
             const results = parsedBody.slice(1); // Remove search term, keep all results
 
             // Separate search URL from results
@@ -58,15 +60,15 @@ module.exports = {
                 const { EmbedBuilder } = require('discord.js');
                 const embed = new EmbedBuilder()
                     .setColor('#0099ff')
-                    .setTitle('Resultado da pesquisa')
+                    .setTitle(t.search.titleItems)
                     .setThumbnail(thumbnail)
                     .addFields({ 
-                        name: `Resultados para "${searchedWord}"`, 
-                        value: 'Nenhum resultado encontrado'
+                        name: `${t.search.resultsFor} "${searchedWord}"`, 
+                        value: t.search.noResults
                     })
                     .addFields({
                         name: '\u200b',
-                        value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                        value: t.credits.divinePride
                     })
                     .setTimestamp();
 
@@ -77,7 +79,7 @@ module.exports = {
             const paginationData = createPaginatedEmbed({
                 items: itemResults,
                 itemsPerPage: 10,
-                title: 'Resultado da pesquisa',
+                title: t.search.titleItems,
                 thumbnail: thumbnail,
                 searchTerm: searchedWord,
                 searchURL: searchURL,
@@ -159,7 +161,7 @@ module.exports = {
             if (itemOptions.length > 0) {
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('item_details_menu')
-                    .setPlaceholder('Selecione um item para ver detalhes')
+                    .setPlaceholder(t.search.selectPlaceholder)
                     .addOptions(itemOptions);
 
                 const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -192,20 +194,20 @@ module.exports = {
                     
                     // Fetch item details
                     const response = await divinePride.makeItemIdRequest(itemId, language);
-                    const itemInfo = await parser.parseDatabaseResponse(response, itemId);
+                    const itemInfo = await parser.parseDatabaseResponse(response, itemId, language);
                     
                     const itemThumbnail = settings.assets[1].url;
                     const itemImage = `https://www.divine-pride.net/img/items/collection/kro/${itemId}`;
                     
                     const detailEmbed = new EmbedBuilder()
                         .setColor('#0099ff')
-                        .setTitle('Informações do Item')
+                        .setTitle(t.item.title)
                         .setThumbnail(itemThumbnail)
                         .setDescription(itemInfo)
                         .setImage(itemImage)
                         .addFields({
                             name: '\u200b',
-                            value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                            value: t.credits.divinePride
                         })
                         .setTimestamp();
 
@@ -213,7 +215,7 @@ module.exports = {
                 } catch (error) {
                     logger.error('Error showing item details', { error: error.message });
                     await selectInteraction.editReply({
-                        content: '❌ Erro ao buscar detalhes do item.'
+                        content: t.errors.itemDetails
                     }).catch(() => {});
                 }
             });
@@ -232,7 +234,7 @@ module.exports = {
                 return interaction.editReply(`❌ ${error.userMessage}`);
             }
             
-            return interaction.editReply('❌ Não foi possível buscar o item solicitado.');
+            return interaction.editReply(t.errors.itemNotFound);
         }
     }
 };

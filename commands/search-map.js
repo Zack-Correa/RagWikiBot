@@ -9,6 +9,8 @@ const divinePride = require('../integrations/database/divine-pride');
 const settings = require('../integrations/const.json');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
+const config = require('../config');
+const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 
 module.exports = {
@@ -20,12 +22,25 @@ module.exports = {
                 .setName('id')
                 .setDescription('ID do mapa (ex: hu_fild03, prt_fild01)')
                 .setRequired(true)
+        )
+        .addStringOption(option =>
+            option
+                .setName('idioma')
+                .setDescription('Idioma da busca (padrão: Português)')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Português (Brasil)', value: 'pt-br' },
+                    { name: 'English', value: 'en' },
+                    { name: 'Español', value: 'es' }
+                )
         ),
 
     async execute(interaction) {
         await interaction.deferReply();
 
         const mapId = interaction.options.getString('id');
+        const language = interaction.options.getString('idioma') || config.defaultLanguage;
+        const t = i18n.getLanguage(language);
 
         // Validate map ID - can be a number or a string like "hu_fild03"
         if (!mapId || mapId.trim() === '') {
@@ -33,8 +48,8 @@ module.exports = {
         }
 
         try {
-            const response = await divinePride.mapSearch(mapId);
-            const mapInfo = await parser.parseMapResponse(response, mapId);
+            const response = await divinePride.mapSearch(mapId, language);
+            const mapInfo = await parser.parseMapResponse(response, mapId, language);
             
             // Try to get map image - first try original, then raw
             let mapImage = null;
@@ -64,12 +79,12 @@ module.exports = {
             const thumbnail = settings.assets[1].url;
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle('Informações do Mapa')
+                .setTitle(t.map.title)
                 .setThumbnail(thumbnail)
                 .setDescription(mapInfo)
                 .addFields({
                     name: '\u200b',
-                    value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                    value: t.credits.divinePride
                 })
                 .setTimestamp();
             
@@ -80,13 +95,13 @@ module.exports = {
 
             return interaction.editReply({ embeds: [embed] });
         } catch (error) {
-            logger.error('Error searching map', { mapId, error: error.message });
+            logger.error('Error searching map', { mapId, language, error: error.message });
             
             if (error instanceof ValidationError || error instanceof CommandError) {
                 return interaction.editReply(`❌ ${error.userMessage}`);
             }
             
-            return interaction.editReply('❌ Não foi possível obter informações do mapa.');
+            return interaction.editReply(t.errors.mapNotFound);
         }
     }
 };

@@ -10,6 +10,7 @@ const settings = require('../integrations/const.json');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
 const config = require('../config');
+const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 const { createPaginatedEmbed, setupPagination } = require('../utils/pagination');
 
@@ -40,13 +41,14 @@ module.exports = {
 
         const searchTerm = interaction.options.getString('nome');
         const language = interaction.options.getString('idioma') || config.defaultLanguage;
+        const t = i18n.getLanguage(language);
 
         try {
             const body = await divinePride.makeMonsterSearchQuery(searchTerm, language);
             const parsedBody = await parser.parseMonsterSearchBodyResponse(searchTerm, body, language);
             
             const thumbnail = settings.assets[1].url;
-            const searchedWord = parsedBody[0] || 'Nenhum termo';
+            const searchedWord = parsedBody[0] || t.search.noResults;
             const results = parsedBody.slice(1); // Remove search term, keep all results
 
             // Separate search URL from results
@@ -58,15 +60,15 @@ module.exports = {
                 const { EmbedBuilder } = require('discord.js');
                 const embed = new EmbedBuilder()
                     .setColor('#0099ff')
-                    .setTitle('Resultado da pesquisa de monstros')
+                    .setTitle(t.search.titleMonsters)
                     .setThumbnail(thumbnail)
                     .addFields({ 
-                        name: `Resultados para "${searchedWord}"`, 
-                        value: 'Nenhum resultado encontrado'
+                        name: `${t.search.resultsFor} "${searchedWord}"`, 
+                        value: t.search.noResults
                     })
                     .addFields({
                         name: '\u200b',
-                        value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                        value: t.credits.divinePride
                     })
                     .setTimestamp();
 
@@ -77,7 +79,7 @@ module.exports = {
             const paginationData = createPaginatedEmbed({
                 items: monsterResults,
                 itemsPerPage: 10,
-                title: 'Resultado da pesquisa de monstros',
+                title: t.search.titleMonsters,
                 thumbnail: thumbnail,
                 searchTerm: searchedWord,
                 searchURL: searchURL,
@@ -210,7 +212,7 @@ module.exports = {
             if (finalOptions.length > 0) {
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('monster_details_menu')
-                    .setPlaceholder('👑 Selecione um monstro para ver detalhes')
+                    .setPlaceholder(t.search.selectPlaceholderMonster)
                     .addOptions(finalOptions);
 
                 const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -243,20 +245,20 @@ module.exports = {
                     
                     // Fetch monster details
                     const response = await divinePride.monsterSearch(monsterId, language);
-                    const monsterInfo = await parser.parseMonsterResponse(response, monsterId);
+                    const monsterInfo = await parser.parseMonsterResponse(response, monsterId, language);
                     
                     const monsterThumbnail = settings.assets[1].url;
                     const monsterImage = `https://static.divine-pride.net/images/mobs/png/${monsterId}.png`;
                     
                     const detailEmbed = new EmbedBuilder()
                         .setColor('#0099ff')
-                        .setTitle('Informações do Monstro')
+                        .setTitle(t.monster.title)
                         .setThumbnail(monsterThumbnail)
                         .setImage(monsterImage)
                         .setDescription(monsterInfo)
                         .addFields({
                             name: '\u200b',
-                            value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                            value: t.credits.divinePride
                         })
                         .setTimestamp();
 
@@ -264,7 +266,7 @@ module.exports = {
                 } catch (error) {
                     logger.error('Error showing monster details', { error: error.message });
                     await selectInteraction.editReply({
-                        content: '❌ Erro ao buscar detalhes do monstro.'
+                        content: t.errors.monsterDetails
                     }).catch(() => {});
                 }
             });
@@ -283,7 +285,7 @@ module.exports = {
                 return interaction.editReply(`❌ ${error.userMessage}`);
             }
             
-            return interaction.editReply('❌ Não foi possível buscar o monstro solicitado.');
+            return interaction.editReply(t.errors.monsterNotFound);
         }
     }
 };

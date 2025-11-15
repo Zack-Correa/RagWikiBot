@@ -5,6 +5,7 @@
 
 const logger = require('./logger');
 const { ValidationError } = require('./errors');
+const i18n = require('./i18n');
 
 /**
  * Parses HTML content using regex to extract item, monster, or map information
@@ -322,9 +323,10 @@ function parseWikiResponse(response) {
  * Parses database response for item by ID
  * @param {Object} response - API response object
  * @param {string} itemId - Item ID for URL generation
+ * @param {string} language - Language code for translations (default: 'pt-br')
  * @returns {Promise<string>} Formatted item information
  */
-function parseDatabaseResponse(response, itemId) {
+function parseDatabaseResponse(response, itemId, language = 'pt-br') {
     return new Promise((resolve, reject) => {
         if (!response) {
             return reject(new ValidationError('Resposta vazia', 'Item não encontrado.'));
@@ -335,6 +337,8 @@ function parseDatabaseResponse(response, itemId) {
         }
 
         try {
+            // Get translations for the specified language
+            const t = i18n.getLanguage(language);
             // Remove illegal "^000000" color codes and format to JSON
             let formattedResponse = JSON.stringify(response);
             // Only remove valid color codes (^ followed by 6 hex digits)
@@ -387,10 +391,10 @@ function parseDatabaseResponse(response, itemId) {
             
             // Build formatted info
             let info = `**${name}**\n\n`;
-            info += `📝 **Descrição:**\n${description}\n\n`;
+            info += `${t.item.description}\n${description}\n\n`;
             
             // Item properties
-            info += `🏷️ **Propriedades:**\n`;
+            info += `${t.item.properties}\n`;
             
             // Type
             if (itemType) {
@@ -398,42 +402,42 @@ function parseDatabaseResponse(response, itemId) {
                 if (itemSubType && itemSubType !== itemType) {
                     typeText += ` - ${itemSubType}`;
                 }
-                info += `• Tipo: ${typeText}\n`;
+                info += `• ${t.item.type}: ${typeText}\n`;
             }
             
             // Attack/Defense
             if (attack && attack > 0) {
-                info += `• Ataque: ${attack}\n`;
+                info += `• ${t.item.attack}: ${attack}\n`;
             }
             if (defense && defense > 0) {
-                info += `• Defesa: ${defense}\n`;
+                info += `• ${t.item.defense}: ${defense}\n`;
             }
             
             // Weight
             if (weight && weight > 0) {
-                info += `• Peso: ${weight}\n`;
+                info += `• ${t.item.weight}: ${weight}\n`;
             }
             
             // Level requirement
             if (requiredLevel && requiredLevel > 0) {
                 let levelText = `${requiredLevel}`;
                 if (equipLevel && equipLevel !== requiredLevel && equipLevel > 0) {
-                    levelText += ` (Equip: ${equipLevel})`;
+                    levelText += ` (${t.item.equip}: ${equipLevel})`;
                 }
-                info += `• Nível: ${levelText}\n`;
+                info += `• ${t.item.level}: ${levelText}\n`;
             }
             
             // Slots
             if (slots > 0) {
-                info += `• Slots: ${slots}\n`;
+                info += `• ${t.item.slots}: ${slots}\n`;
             }
             
             // Applicable jobs/classes
             if (applicableJobs && applicableJobs !== 'N/A') {
-                info += `• Classes: ${applicableJobs}\n`;
+                info += `• ${t.item.classes}: ${applicableJobs}\n`;
             }
             
-            info += `\n🔗 [Ver mais detalhes](${url})`;
+            info += `\n🔗 [${t.item.viewMore}](${url})`;
 
             logger.debug('Item parsed successfully', { itemId, name });
             
@@ -953,9 +957,10 @@ function parseMapSearchBodyResponse(searchedWord, response) {
  * Parses monster data from API response
  * @param {Object} response - API response object
  * @param {string} monsterId - Monster ID for URL generation
+ * @param {string} language - Language code for translations (default: 'pt-br')
  * @returns {Promise<string>} Formatted monster information
  */
-function parseMonsterResponse(response, monsterId) {
+function parseMonsterResponse(response, monsterId, language = 'pt-br') {
     return new Promise((resolve, reject) => {
         if (!response) {
             return reject(new ValidationError('Resposta vazia', 'Monstro não encontrado.'));
@@ -966,6 +971,8 @@ function parseMonsterResponse(response, monsterId) {
         }
 
         try {
+            // Get translations for the specified language
+            const t = i18n.getLanguage(language);
             // Log raw response for debugging
             logger.debug('Raw monster response', { 
                 monsterId, 
@@ -1022,74 +1029,51 @@ function parseMonsterResponse(response, monsterId) {
             const baseExp = formatValue(stats.baseExperience);
             const jobExp = formatValue(stats.jobExperience);
             
-            // Extract race, element, scale - convert numbers to Portuguese names
-            const raceMap = {
-                0: 'Amorfo', 1: 'Morto-Vivo', 2: 'Bruto', 3: 'Planta', 4: 'Inseto',
-                5: 'Peixe', 6: 'Demônio', 7: 'Humanoide', 8: 'Anjo', 9: 'Dragão'
-            };
-            
-            // Element is a bitmask, but we'll show the number for now
-            // Common elements: 0=Neutral, 1=Water, 2=Earth, 3=Fire, 4=Wind, 5=Poison, 6=Holy, 7=Dark, 8=Ghost, 9=Undead
-            const elementMap = {
-                0: 'Neutro', 1: 'Água', 2: 'Terra', 3: 'Fogo', 4: 'Vento',
-                5: 'Veneno', 6: 'Sagrado', 7: 'Sombrio', 8: 'Fantasma', 9: 'Morto-Vivo'
-            };
-            
-            const sizeMap = {
-                0: 'Pequeno', 1: 'Médio', 2: 'Grande'
-            };
-
+            // Get translated race
             let race = 'N/A';
             if (stats.race !== undefined && stats.race !== null) {
-                race = raceMap[stats.race] || `Raça ${stats.race}`;
+                race = t.races[stats.race] || `${t.monster.race} ${stats.race}`;
             }
 
+            // Get translated element and weakness
             let element = 'N/A';
             let weakElement = 'N/A';
             
             if (stats.element !== undefined && stats.element !== null) {
-                // Element encoding in RO can be complex (bitmask)
-                // Try to decode common values first
-                const elementNames = {
-                    0: 'Neutro', 1: 'Água', 2: 'Terra', 3: 'Fogo', 4: 'Vento',
-                    5: 'Veneno', 6: 'Sagrado', 7: 'Sombrio', 8: 'Fantasma', 9: 'Morto-Vivo',
-                    10: 'Arma', 11: 'Dotado', 12: 'Aleatório'
-                };
-                
                 // Map of which element causes most damage to each element
                 const weaknessMap = {
-                    0: 'Todos', // Neutro recebe mais dano de todos
-                    1: 'Vento', // Água recebe mais dano de Vento
-                    2: 'Fogo', // Terra recebe mais dano de Fogo
-                    3: 'Água', // Fogo recebe mais dano de Água
-                    4: 'Terra', // Vento recebe mais dano de Terra
-                    5: 'Sagrado', // Veneno recebe mais dano de Sagrado
-                    6: 'Sombrio', // Sagrado recebe mais dano de Sombrio
-                    7: 'Sagrado', // Sombrio recebe mais dano de Sagrado
-                    8: 'Sagrado', // Fantasma recebe mais dano de Sagrado
-                    9: 'Sagrado' // Morto-Vivo recebe mais dano de Sagrado
+                    0: t.elements[0], // Neutro recebe mais dano de todos
+                    1: t.elements[4], // Água recebe mais dano de Vento
+                    2: t.elements[3], // Terra recebe mais dano de Fogo
+                    3: t.elements[1], // Fogo recebe mais dano de Água
+                    4: t.elements[2], // Vento recebe mais dano de Terra
+                    5: t.elements[6], // Veneno recebe mais dano de Sagrado
+                    6: t.elements[7], // Sagrado recebe mais dano de Sombrio
+                    7: t.elements[6], // Sombrio recebe mais dano de Sagrado
+                    8: t.elements[6], // Fantasma recebe mais dano de Sagrado
+                    9: t.elements[6]  // Morto-Vivo recebe mais dano de Sagrado
                 };
                 
                 // If it's a simple value (0-12), use the name
-                if (elementNames[stats.element]) {
-                    element = elementNames[stats.element];
+                if (t.elements[stats.element]) {
+                    element = t.elements[stats.element];
                     weakElement = weaknessMap[stats.element] || 'N/A';
                 } else {
                     // For complex bitmasks, try to extract primary element
-                    // Common pattern: element % 20 gives base element in some cases
                     const baseElement = stats.element % 20;
-                    if (elementNames[baseElement]) {
-                        element = elementNames[baseElement];
+                    if (t.elements[baseElement]) {
+                        element = t.elements[baseElement];
                         weakElement = weaknessMap[baseElement] || 'N/A';
                     } else {
-                        element = `Elemento ${stats.element}`;
+                        element = `${t.monster.element} ${stats.element}`;
                     }
                 }
             }
 
+            // Get translated size
             let size = 'N/A';
             if (stats.scale !== undefined && stats.scale !== null) {
-                size = sizeMap[stats.scale] || `Tamanho ${stats.scale}`;
+                size = t.sizes[stats.scale] || `${t.monster.size} ${stats.scale}`;
             }
             
             // Extract additional info
@@ -1103,40 +1087,40 @@ function parseMonsterResponse(response, monsterId) {
 
             let info = `\n# [**${name}**](${url})`;
             if (isMvp) {
-                info += ` 👑 **MVP**`;
+                info += ` 👑 **${t.monster.mvp}**`;
             }
             info += `\n`;
             
-            info += `\n📊 **Estatísticas:**\n`;
-            info += `• Nível: ${level}\n`;
-            info += `• HP: ${hp}\n`;
-            info += `• ATK: ${atk}\n`;
-            info += `• DEF: ${def}\n`;
-            info += `• MDEF: ${mdef}\n`;
+            info += `\n${t.monster.stats}\n`;
+            info += `• ${t.monster.level}: ${level}\n`;
+            info += `• ${t.monster.hp}: ${hp}\n`;
+            info += `• ${t.monster.atk}: ${atk}\n`;
+            info += `• ${t.monster.def}: ${def}\n`;
+            info += `• ${t.monster.mdef}: ${mdef}\n`;
             
-            info += `\n🎯 **Informações:**\n`;
-            info += `• Raça: ${race}\n`;
-            info += `• Elemento: ${element}\n`;
+            info += `\n${t.monster.info}\n`;
+            info += `• ${t.monster.race}: ${race}\n`;
+            info += `• ${t.monster.element}: ${element}\n`;
             if (weakElement !== 'N/A') {
-                info += `• Fraqueza: ${weakElement}\n`;
+                info += `• ${t.monster.weakness}: ${weakElement}\n`;
             }
-            info += `• Tamanho: ${size}\n`;
+            info += `• ${t.monster.size}: ${size}\n`;
             
             if (baseExp !== 'N/A' || jobExp !== 'N/A') {
-                info += `\n💰 **Experiência:**\n`;
-                if (baseExp !== 'N/A') info += `• Base EXP: ${baseExp}\n`;
-                if (jobExp !== 'N/A') info += `• Job EXP: ${jobExp}\n`;
+                info += `\n${t.monster.experience}\n`;
+                if (baseExp !== 'N/A') info += `• ${t.monster.baseExp}: ${baseExp}\n`;
+                if (jobExp !== 'N/A') info += `• ${t.monster.jobExp}: ${jobExp}\n`;
             }
 
             // Add spawn locations if available
             if (spawn.length > 0) {
-                info += `\n\n🗺️ **Aparece em ${spawn.length} mapa(s):**\n`;
+                info += `\n\n${t.monster.appearsIn} ${spawn.length} ${t.monster.maps}\n`;
                 const spawnList = spawn.slice(0, 5).map(s => {
-                    return `• [${s.mapname}](https://www.divine-pride.net/database/map/${s.mapname}) (${s.amount} monstros)`;
+                    return `• [${s.mapname}](https://www.divine-pride.net/database/map/${s.mapname}) (${s.amount} ${t.monster.monsters})`;
                 }).join('\n');
                 info += spawnList;
                 if (spawn.length > 5) {
-                    info += `\n• ... e mais ${spawn.length - 5} mapa(s)`;
+                    info += `\n• ${t.monster.andMore} ${spawn.length - 5} ${t.monster.maps.replace(':**', '')}`;
                 }
             }
 
@@ -1159,9 +1143,10 @@ function parseMonsterResponse(response, monsterId) {
  * Parses map data from API response
  * @param {Object} response - API response object
  * @param {string} mapId - Map ID for URL generation
+ * @param {string} language - Language code for translations (default: 'pt-br')
  * @returns {Promise<string>} Formatted map information
  */
-function parseMapResponse(response, mapId) {
+function parseMapResponse(response, mapId, language = 'pt-br') {
     return new Promise((resolve, reject) => {
         if (!response) {
             return reject(new ValidationError('Resposta vazia', 'Mapa não encontrado.'));
@@ -1172,6 +1157,8 @@ function parseMapResponse(response, mapId) {
         }
 
         try {
+            // Get translations for the specified language
+            const t = i18n.getLanguage(language);
             // Log raw response for debugging
             logger.debug('Raw map response', { 
                 mapId, 
@@ -1227,14 +1214,14 @@ function parseMapResponse(response, mapId) {
             const url = `https://www.divine-pride.net/database/map/${mapname}`;
 
             let info = `\n**${name}**\n`;
-            info += `\n🗺️ **Informações do Mapa:**\n`;
-            info += `• Mapname: ${mapname}\n`;
+            info += `\n${t.map.info}\n`;
+            info += `• ${t.map.mapname}: ${mapname}\n`;
             if (music !== 'N/A' && music) {
-                info += `• Música: ${music.replace(/\\/g, '/')}\n`;
+                info += `• ${t.map.music}: ${music.replace(/\\/g, '/')}\n`;
             }
 
             if (monsters && monsters.length > 0) {
-                info += `\n👹 **Monstros (${monsters.length} tipos):**\n`;
+                info += `\n${t.map.monsters} (${monsters.length} ${t.map.types}):**\n`;
                 const monsterList = monsters.slice(0, 10).map(m => {
                     const monsterName = cleanString(m.name);
                     const monsterId = m.id || '';
@@ -1246,19 +1233,19 @@ function parseMapResponse(response, mapId) {
                 }).join('\n');
                 info += monsterList;
                 if (monsters.length > 10) {
-                    info += `\n• ... e mais ${monsters.length - 10} tipo(s) de monstro`;
+                    info += `\n• ${t.map.andMore} ${monsters.length - 10} ${t.map.monsterType}`;
                 }
             }
 
             if (npcs && npcs.length > 0) {
-                info += `\n\n👤 **NPCs (${npcs.length}):**\n`;
+                info += `\n\n${t.map.npcs} (${npcs.length}):**\n`;
                 const npcList = npcs.slice(0, 10).map(npc => {
                     const npcName = cleanString(npc.name || `NPC ID ${npc.id || 'N/A'}`);
                     return `• ${npcName}`;
                 }).join('\n');
                 info += npcList;
                 if (npcs.length > 10) {
-                    info += `\n• ... e mais ${npcs.length - 10} NPC(s)`;
+                    info += `\n• ${t.map.andMore} ${npcs.length - 10} NPCs`;
                 }
             }
 

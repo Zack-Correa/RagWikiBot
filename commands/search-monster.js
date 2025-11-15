@@ -8,6 +8,8 @@ const divinePride = require('../integrations/database/divine-pride');
 const settings = require('../integrations/const.json');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
+const config = require('../config');
+const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 
 module.exports = {
@@ -19,46 +21,59 @@ module.exports = {
                 .setName('id')
                 .setDescription('ID do monstro')
                 .setRequired(true)
+        )
+        .addStringOption(option =>
+            option
+                .setName('idioma')
+                .setDescription('Idioma da busca (padrão: Português)')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Português (Brasil)', value: 'pt-br' },
+                    { name: 'English', value: 'en' },
+                    { name: 'Español', value: 'es' }
+                )
         ),
 
     async execute(interaction) {
         await interaction.deferReply();
 
         const monsterId = interaction.options.getString('id');
+        const language = interaction.options.getString('idioma') || config.defaultLanguage;
+        const t = i18n.getLanguage(language);
 
         // Validate monster ID
         if (!/^\d+$/.test(monsterId)) {
-            return interaction.editReply('❌ O ID do monstro deve ser um número.');
+            return interaction.editReply(t.errors.invalidId.replace('item', 'monstro'));
         }
 
         try {
-            const response = await divinePride.monsterSearch(monsterId);
-            const monsterInfo = await parser.parseMonsterResponse(response, monsterId);
+            const response = await divinePride.monsterSearch(monsterId, language);
+            const monsterInfo = await parser.parseMonsterResponse(response, monsterId, language);
             
             const thumbnail = settings.assets[1].url;
             const monsterImage = `https://static.divine-pride.net/images/mobs/png/${monsterId}.png`;
             
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle('Informações do Monstro')
+                .setTitle(t.monster.title)
                 .setThumbnail(thumbnail)
                 .setImage(monsterImage)
                 .setDescription(monsterInfo)
                 .addFields({
                     name: '\u200b',
-                    value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+                    value: t.credits.divinePride
                 })
                 .setTimestamp();
 
             return interaction.editReply({ embeds: [embed] });
         } catch (error) {
-            logger.error('Error searching monster', { monsterId, error: error.message });
+            logger.error('Error searching monster', { monsterId, language, error: error.message });
             
             if (error instanceof ValidationError || error instanceof CommandError) {
                 return interaction.editReply(`❌ ${error.userMessage}`);
             }
             
-            return interaction.editReply('❌ Não foi possível obter informações do monstro.');
+            return interaction.editReply(t.errors.monsterNotFound);
         }
     }
 };

@@ -8,6 +8,7 @@ const divinePride = require('../integrations/database/divine-pride');
 const parser = require('../utils/parser');
 const logger = require('../utils/logger');
 const config = require('../config');
+const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 
 module.exports = {
@@ -37,16 +38,17 @@ module.exports = {
 
         const itemId = interaction.options.getString('id');
         const language = interaction.options.getString('idioma') || config.defaultLanguage;
+        const t = i18n.getLanguage(language);
 
         // Validate item ID
         if (!/^\d+$/.test(itemId)) {
-            return interaction.editReply('❌ O ID do item deve ser um número.');
+            return interaction.editReply(t.errors.invalidId);
         }
 
         try {
             const response = await divinePride.makeItemIdRequest(itemId, language);
-            const result = await parser.parseDatabaseResponse(response, itemId);
-            const resultWithCredit = `${result}\n\n*Conteúdo fornecido por Divine Pride (https://www.divine-pride.net)*`;
+            const result = await parser.parseDatabaseResponse(response, itemId, language);
+            const resultWithCredit = `${result}\n\n${t.credits.divinePride}`;
             return interaction.editReply(resultWithCredit);
         } catch (error) {
             logger.error('Error searching item by ID', { itemId, language, error: error.message });
@@ -55,7 +57,7 @@ module.exports = {
                 return interaction.editReply(`❌ ${error.userMessage}`);
             }
             
-            return interaction.editReply('❌ Não foi possível obter informações do item.');
+            return interaction.editReply(t.errors.itemNotFound);
         }
     }
 };
