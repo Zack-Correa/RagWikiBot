@@ -59,11 +59,11 @@ async function setupScrapingCookies(language) {
     }
     
     try {
-        // Step 1: Set server to LATAM (bRO)
+        // Step 1: Set server to LATAM
         logger.debug('Setting Divine Pride server to LATAM', { language });
         const serverResponse = await axios.post(
             ENDPOINTS.SET_SERVER,
-            { server: 'bro' }, // Always use LATAM
+            { server: 'LATAM' }, // Always use LATAM server
             {
                 headers: {
                     'Content-Type': 'application/json'
