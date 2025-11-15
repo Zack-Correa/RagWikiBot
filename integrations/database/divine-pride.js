@@ -80,7 +80,7 @@ async function makeSearchQuery(queryString, language) {
     
     // Get Accept-Language header for the selected language
     const languageConfig = config.languages[language.toLowerCase()];
-    const acceptLanguage = languageConfig?.acceptLanguage || 'pt-BR';
+    const acceptLanguage = languageConfig?.acceptLanguage || 'pt';
     
     const requestConfig = {
         method: 'GET',
@@ -160,7 +160,7 @@ async function monsterSearch(monsterId, server = null) {
     const endpoint = `${ENDPOINTS.MONSTER}${monsterId}?apiKey=${apiKey}`;
     
     // Get language preference based on server or default
-    let acceptLanguage = 'pt-BR'; // Default to Portuguese
+    let acceptLanguage = 'pt'; // Default to Portuguese
     if (server) {
         const languageConfig = config.languages[server.toLowerCase()];
         if (languageConfig?.acceptLanguage) {
@@ -223,7 +223,7 @@ async function mapSearch(mapId, server = null) {
     const endpoint = `${ENDPOINTS.MAP}${mapId}?apiKey=${apiKey}`;
     
     // Get language preference based on server or default
-    let acceptLanguage = 'pt-BR'; // Default to Portuguese
+    let acceptLanguage = 'pt'; // Default to Portuguese
     if (server) {
         const languageConfig = config.languages[server.toLowerCase()];
         if (languageConfig?.acceptLanguage) {
@@ -283,7 +283,7 @@ async function skillSearch(skillId, server = null) {
     const endpoint = `${ENDPOINTS.SKILL}${skillId}?apiKey=${apiKey}`;
     
     // Get language preference based on server or default
-    let acceptLanguage = 'pt-BR'; // Default to Portuguese
+    let acceptLanguage = 'pt'; // Default to Portuguese
     if (server) {
         const languageConfig = config.languages[server.toLowerCase()];
         if (languageConfig?.acceptLanguage) {
@@ -333,7 +333,7 @@ async function makeMonsterSearchQuery(queryString, language) {
         
         // Get Accept-Language header for the selected language
         const languageConfig = config.languages[language.toLowerCase()];
-        const acceptLanguage = languageConfig?.acceptLanguage || 'pt-BR';
+        const acceptLanguage = languageConfig?.acceptLanguage || 'pt';
         
         const requestConfig = {
             method: 'GET',
@@ -415,7 +415,7 @@ async function makeMapSearchQuery(queryString, language) {
         
         // Get Accept-Language header for the selected language
         const languageConfig = config.languages[language.toLowerCase()];
-        const acceptLanguage = languageConfig?.acceptLanguage || 'pt-BR';
+        const acceptLanguage = languageConfig?.acceptLanguage || 'pt';
         
         const requestConfig = {
             method: 'GET',
