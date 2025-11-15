@@ -7,36 +7,78 @@ const logger = require('./logger');
 const { ValidationError } = require('./errors');
 
 /**
- * Parses HTML content using regex to extract item information
+ * Parses HTML content using regex to extract item, monster, or map information
  * @param {string} html - HTML content to parse
+ * @param {string} type - Type of entity to search for: 'item', 'monster', or 'map' (default: 'item')
  * @returns {Array<string>|null} Parsed HTML fragments or null if no matches
  */
-function parseHTMLByRegex(html) {
+function parseHTMLByRegex(html, type = 'item') {
     if (!html || typeof html !== 'string') {
         logger.warn('Invalid HTML input for parsing');
         return null;
     }
 
     try {
-        // Try multiple regex patterns to find item rows
-        // Pattern 1: Original pattern
-    let regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
-    let parsedHTML = html.match(regexp);
+        let regexp;
+        let parsedHTML = null;
         
-        // Pattern 2: More flexible pattern for table cells with links
-        if (!parsedHTML || parsedHTML.length === 0) {
-            regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*item[^>]*>[\s\S]*?<\/td>/gi;
+        // Define patterns based on entity type
+        if (type === 'monster') {
+            // Try to find the monster section in the HTML first
+            // Look for rows (tr) that contain monster links specifically
+            regexp = /<tr[^>]*>[\s\S]*?\/database\/monster\/\d+[\s\S]*?<\/tr>/gi;
             parsedHTML = html.match(regexp);
-        }
-        
-        // Pattern 3: Look for any table cell containing item links
-        if (!parsedHTML || parsedHTML.length === 0) {
-            regexp = /<td[^>]*>[\s\S]{0,500}?item\/\d+[\s\S]{0,500}?<\/td>/gi;
+            
+            // If that doesn't work, try table cells with monster links
+            if (!parsedHTML || parsedHTML.length === 0) {
+                regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*\/database\/monster\/\d+[^>]*>[\s\S]*?<\/td>/gi;
+                parsedHTML = html.match(regexp);
+            }
+            
+            // Last resort: any element containing monster link
+            if (!parsedHTML || parsedHTML.length === 0) {
+                regexp = /<a[^>]*href="[^"]*\/database\/monster\/(\d+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                parsedHTML = html.match(regexp);
+            }
+        } else if (type === 'map') {
+            // Try to find the map section in the HTML first
+            // Look for rows (tr) that contain map links specifically
+            regexp = /<tr[^>]*>[\s\S]*?\/database\/map\/[a-zA-Z0-9_]+[\s\S]*?<\/tr>/gi;
             parsedHTML = html.match(regexp);
+            
+            // If that doesn't work, try table cells with map links
+            if (!parsedHTML || parsedHTML.length === 0) {
+                regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*\/database\/map\/[a-zA-Z0-9_]+[^>]*>[\s\S]*?<\/td>/gi;
+                parsedHTML = html.match(regexp);
+            }
+            
+            // Last resort: any element containing map link
+            if (!parsedHTML || parsedHTML.length === 0) {
+                regexp = /<a[^>]*href="[^"]*\/database\/map\/([a-zA-Z0-9_]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                parsedHTML = html.match(regexp);
+            }
+        } else {
+            // Default: item patterns
+            // Pattern 1: Original pattern
+            regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
+            parsedHTML = html.match(regexp);
+            
+            // Pattern 2: More flexible pattern for table cells with links
+            if (!parsedHTML || parsedHTML.length === 0) {
+                regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*item[^>]*>[\s\S]*?<\/td>/gi;
+                parsedHTML = html.match(regexp);
+            }
+            
+            // Pattern 3: Look for any table cell containing item links
+            if (!parsedHTML || parsedHTML.length === 0) {
+                regexp = /<td[^>]*>[\s\S]{0,500}?item\/\d+[\s\S]{0,500}?<\/td>/gi;
+                parsedHTML = html.match(regexp);
+            }
         }
         
         if (!parsedHTML || parsedHTML.length === 0) {
             logger.debug('No matches found with any regex pattern', {
+                type,
                 htmlLength: html.length,
                 htmlPreview: html.substring(0, 1000)
             });
@@ -47,13 +89,14 @@ function parseHTMLByRegex(html) {
         const result = parsedHTML.toString().split('<td>').filter(item => item.trim().length > 0);
         
         logger.debug('HTML parsed successfully', {
+            type,
             matchesFound: parsedHTML.length,
             resultLength: result.length
         });
         
         return result;
     } catch (error) {
-        logger.error('Error parsing HTML by regex', { error: error.message });
+        logger.error('Error parsing HTML by regex', { type, error: error.message });
         return null;
     }
 }
@@ -294,19 +337,107 @@ function parseDatabaseResponse(response, itemId) {
         try {
             // Remove illegal "^000000" color codes and format to JSON
             let formattedResponse = JSON.stringify(response);
-            formattedResponse = JSON.parse(formattedResponse.replace(/(\^[0-9|a-z]{6,7})/gi, ''));
+            // Only remove valid color codes (^ followed by 6 hex digits)
+            formattedResponse = JSON.parse(formattedResponse.replace(/\\\^[0-9A-Fa-f]{6}/g, ''));
+
+            // Log full response for debugging
+            logger.debug('Full item response', { 
+                itemId, 
+                responseKeys: Object.keys(formattedResponse),
+                sampleData: JSON.stringify(formattedResponse).substring(0, 500)
+            });
 
             if (!formattedResponse.name) {
                 return reject(new ValidationError('Item inválido', 'Item não encontrado ou inválido.'));
             }
 
-            const name = formattedResponse.name || 'Nome não disponível';
-            const description = formattedResponse.description || 'Descrição não disponível';
+            // Clean string helper - preserves full text
+            const cleanString = (str) => {
+                if (typeof str !== 'string') return str;
+                // Be more careful with color code removal - only remove if it starts with ^
+                return str
+                    .replace(/\^[0-9A-Fa-f]{6}/g, '') // Remove color codes like ^000000
+                    .replace(/\r\n/g, '\n') // Normalize line breaks
+                    .replace(/^\s+|\s+$/g, ''); // Remove only whitespace from edges, not characters
+            };
+
+            const name = cleanString(formattedResponse.name || 'Nome não disponível');
+            const description = cleanString(formattedResponse.description || 'Descrição não disponível');
             const url = `https://www.divine-pride.net/database/item/${itemId}`;
+            
+            // Extract additional item info with proper cleaning
+            const itemType = cleanString(formattedResponse.itemType || formattedResponse.type || '');
+            const itemSubType = cleanString(formattedResponse.itemSubType || formattedResponse.subType || '');
+            const attack = formattedResponse.attack || formattedResponse.atk || 0;
+            const defense = formattedResponse.defense || formattedResponse.def || 0;
+            const weight = formattedResponse.weight || 0;
+            const requiredLevel = formattedResponse.requiredLevel || formattedResponse.levelRequirement || 0;
+            const equipLevel = formattedResponse.equipLevel || formattedResponse.equipLevelMin || 0;
+            const slots = formattedResponse.slots || formattedResponse.slot || 0;
+            
+            // Extract applicable classes/jobs
+            let applicableJobs = '';
+            if (formattedResponse.applicableJob) {
+                applicableJobs = cleanString(formattedResponse.applicableJob);
+            } else if (formattedResponse.applicableJobs && Array.isArray(formattedResponse.applicableJobs)) {
+                applicableJobs = formattedResponse.applicableJobs.map(j => cleanString(j.name || j)).join(', ');
+            } else if (formattedResponse.classes) {
+                applicableJobs = cleanString(formattedResponse.classes);
+            }
+            
+            // Build formatted info
+            let info = `**${name}**\n\n`;
+            info += `📝 **Descrição:**\n${description}\n\n`;
+            
+            // Item properties
+            info += `🏷️ **Propriedades:**\n`;
+            
+            // Type
+            if (itemType) {
+                let typeText = itemType;
+                if (itemSubType && itemSubType !== itemType) {
+                    typeText += ` - ${itemSubType}`;
+                }
+                info += `• Tipo: ${typeText}\n`;
+            }
+            
+            // Attack/Defense
+            if (attack && attack > 0) {
+                info += `• Ataque: ${attack}\n`;
+            }
+            if (defense && defense > 0) {
+                info += `• Defesa: ${defense}\n`;
+            }
+            
+            // Weight
+            if (weight && weight > 0) {
+                info += `• Peso: ${weight}\n`;
+            }
+            
+            // Level requirement
+            if (requiredLevel && requiredLevel > 0) {
+                let levelText = `${requiredLevel}`;
+                if (equipLevel && equipLevel !== requiredLevel && equipLevel > 0) {
+                    levelText += ` (Equip: ${equipLevel})`;
+                }
+                info += `• Nível: ${levelText}\n`;
+            }
+            
+            // Slots
+            if (slots > 0) {
+                info += `• Slots: ${slots}\n`;
+            }
+            
+            // Applicable jobs/classes
+            if (applicableJobs && applicableJobs !== 'N/A') {
+                info += `• Classes: ${applicableJobs}\n`;
+            }
+            
+            info += `\n🔗 [Ver mais detalhes](${url})`;
 
             logger.debug('Item parsed successfully', { itemId, name });
             
-            resolve(`\nNome: ${name}\nDescrição: ${description}\n${url}`);
+            resolve(info);
         } catch (error) {
             logger.error('Error parsing database response', { itemId, error: error.message });
             reject(new ValidationError('Erro ao processar resposta', 'Erro ao processar informações do item.'));
@@ -432,6 +563,384 @@ function parseDatabaseBodyResponse(searchedWord, response) {
             resolve(parsedResponse);
         } catch (error) {
             logger.error('Error parsing database body response', { 
+                searchedWord, 
+                error: error.message 
+            });
+            reject(new ValidationError('Erro ao processar resposta', 'Erro ao processar os resultados da busca.'));
+        }
+    });
+}
+
+/**
+ * Parses search results for monsters
+ * @param {string} searchedWord - The search term
+ * @param {Array} response - Array of parsed HTML fragments
+ * @param {string} server - Server identifier for MVP checking
+ * @returns {Promise<Array>} Formatted results array
+ */
+function parseMonsterSearchBodyResponse(searchedWord, response, server = null) {
+    return new Promise(async (resolve, reject) => {
+        if (!searchedWord) {
+            return reject(new ValidationError('Termo de busca não fornecido', 'Termo de busca é obrigatório.'));
+        }
+
+        if (!response || !Array.isArray(response)) {
+            return reject(new ValidationError('Resposta inválida', 'Não foram encontrados resultados!'));
+        }
+
+        if (response.length === 0) {
+            return reject(new ValidationError('Nenhum resultado', 'Não foram encontrados resultados!'));
+        }
+
+        try {
+            const parsedResponse = [searchedWord];
+            const cleanedResponse = response.slice(1);
+            let monstersFound = 0;
+            const tempMonsters = []; // Store temporarily to check MVP status
+
+            for (let i = 0; i < cleanedResponse.length; i++) {
+                const body = cleanedResponse[i];
+                if (!body || typeof body !== 'string') continue;
+
+                try {
+                    // First, ensure this is actually a monster (not an item or map)
+                    // Check if the body contains a link to /database/monster/
+                    if (!body.includes('/database/monster/') && !body.includes('monster/')) {
+                        continue; // Skip this entry, it's not a monster
+                    }
+                    
+                    // Also skip if it contains item or map links
+                    if (body.includes('/database/item/') || body.includes('/database/map/')) {
+                        continue;
+                    }
+                    
+                    let nameMatch = body.match(/alt="([^"]+)"/);
+                    let idMatch = body.match(/\/database\/monster\/(\d+)/);
+                    
+                    if (!nameMatch) {
+                        nameMatch = body.match(/title="([^"]+)"/);
+                    }
+                    
+                    if (!nameMatch) {
+                        // Try to extract from link text
+                        nameMatch = body.match(/>([^<]+)<\/a>/);
+                    }
+                    
+                    if (!idMatch) {
+                        idMatch = body.match(/monster[\/=](\d+)/);
+                    }
+
+                    if (nameMatch && idMatch) {
+                        let monsterName = nameMatch[1]
+                            .replace(/&#(\d+);/g, (match, code) => String.fromCharCode(parseInt(code, 10)))
+                            .replace(/&quot;/g, '"')
+                            .replace(/&amp;/g, '&')
+                            .replace(/&lt;/g, '<')
+                            .replace(/&gt;/g, '>')
+                            .replace(/(\^[0-9|a-z]{6,7})/gi, '') // Remove color codes
+                            .trim();
+                        
+                        // Skip if name is empty or invalid
+                        if (!monsterName || monsterName.length === 0) {
+                            continue;
+                        }
+                        
+                        // Skip Korean characters (Hangul unicode range: \uAC00-\uD7AF)
+                        if (/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(monsterName)) {
+                            logger.debug('Skipping Korean monster name', { monsterName });
+                            continue;
+                        }
+                        
+                        // Skip names with encoding issues (common patterns)
+                        if (/[\u0000-\u001F\uFFFD]/.test(monsterName) || // Control chars or replacement char
+                            monsterName.includes('�') || // Replacement character
+                            monsterName.includes('&#x') || // Unprocessed HTML entities
+                            /[^\x00-\x7F\u00A0-\u024F\u0400-\u04FF\u2000-\u206F\u3000-\u303F\uFF00-\uFFEF]/.test(monsterName)) {
+                            logger.debug('Skipping monster with encoding issues', { monsterName });
+                            continue;
+                        }
+                        
+                        // Skip placeholder names
+                        if (monsterName.toLowerCase().includes('[ph]') ||
+                            monsterName.toLowerCase().includes('placeholder') ||
+                            monsterName.toLowerCase().includes('unknown') ||
+                            monsterName === 'N/A' ||
+                            monsterName === '?') {
+                            continue;
+                        }
+
+                        const monsterId = idMatch[1];
+                        const monsterURL = `https://www.divine-pride.net/database/monster/${monsterId}`;
+
+                        tempMonsters.push({
+                            name: monsterName,
+                            id: monsterId,
+                            url: monsterURL
+                        });
+                        monstersFound++;
+                    } else {
+                        logger.debug('Could not extract monster data from HTML fragment', {
+                            index: i,
+                            hasNameMatch: !!nameMatch,
+                            hasIdMatch: !!idMatch,
+                            bodyPreview: body.substring(0, 200)
+                        });
+                    }
+                } catch (parseError) {
+                    logger.warn('Error parsing individual monster', { 
+                        index: i, 
+                        error: parseError.message 
+                    });
+                }
+            }
+            
+            logger.debug('Parsed monsters from response', {
+                searchedWord,
+                totalFragments: cleanedResponse.length,
+                monstersFound: monstersFound
+            });
+
+            if (monstersFound === 0) {
+                logger.warn('No monsters found in parsed response', {
+                    searchedWord,
+                    parsedResponseLength: parsedResponse.length,
+                    monstersFound: monstersFound
+                });
+                return reject(new ValidationError('Nenhum resultado', 'Não foram encontrados resultados!'));
+            }
+
+            // Check MVP status in parallel (with timeout)
+            try {
+                const divinePride = require('../integrations/database/divine-pride');
+                
+                const mvpCheckPromises = tempMonsters.map(async (monster) => {
+                    try {
+                        const monsterData = await divinePride.monsterSearch(monster.id, server);
+                        const isMvp = monsterData?.stats?.mvp === 1;
+                        return { id: monster.id, isMvp };
+                    } catch {
+                        return { id: monster.id, isMvp: false };
+                    }
+                });
+                
+                // Wait for all checks with a timeout of 4 seconds
+                const mvpResults = await Promise.race([
+                    Promise.all(mvpCheckPromises),
+                    new Promise((resolve) => setTimeout(() => resolve([]), 4000))
+                ]);
+                
+                // Create map of MVP status
+                const mvpMap = new Map();
+                if (Array.isArray(mvpResults)) {
+                    mvpResults.forEach(r => mvpMap.set(r.id, r.isMvp));
+                }
+                
+                // Add formatted results with MVP indicators
+                tempMonsters.forEach(monster => {
+                    const isMvp = mvpMap.get(monster.id) || false;
+                    if (isMvp) {
+                        // Place crown inside the link for better visibility
+                        parsedResponse.push(`[👑 ${monster.name}](${monster.url})`);
+                    } else {
+                        parsedResponse.push(`[${monster.name}](${monster.url})`);
+                    }
+                });
+                
+                logger.debug('MVP status checked', {
+                    searchedWord,
+                    mvpCount: Array.from(mvpMap.values()).filter(v => v).length
+                });
+            } catch (error) {
+                logger.warn('Error checking MVP status, continuing without indicators', {
+                    error: error.message
+                });
+                
+                // Fallback: add without MVP indicators
+                tempMonsters.forEach(monster => {
+                    parsedResponse.push(`[${monster.name}](${monster.url})`);
+                });
+            }
+
+            const searchURL = `\n\n[🔍 Pesquisa completa](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
+            parsedResponse.push(searchURL);
+
+            logger.debug('Monster search parsed successfully', { 
+                searchedWord, 
+                resultsCount: parsedResponse.length - 2 
+            });
+
+            resolve(parsedResponse);
+        } catch (error) {
+            logger.error('Error parsing monster search response', { 
+                searchedWord, 
+                error: error.message 
+            });
+            reject(new ValidationError('Erro ao processar resposta', 'Erro ao processar os resultados da busca.'));
+        }
+    });
+}
+
+/**
+ * Parses search results for maps
+ * @param {string} searchedWord - The search term
+ * @param {Array} response - Array of parsed HTML fragments
+ * @returns {Promise<Array>} Formatted results array
+ */
+function parseMapSearchBodyResponse(searchedWord, response) {
+    return new Promise((resolve, reject) => {
+        if (!searchedWord) {
+            return reject(new ValidationError('Termo de busca não fornecido', 'Termo de busca é obrigatório.'));
+        }
+
+        if (!response || !Array.isArray(response)) {
+            return reject(new ValidationError('Resposta inválida', 'Não foram encontrados resultados!'));
+        }
+
+        if (response.length === 0) {
+            return reject(new ValidationError('Nenhum resultado', 'Não foram encontrados resultados!'));
+        }
+
+        try {
+            const parsedResponse = [searchedWord];
+            const cleanedResponse = response.slice(1);
+            const tempMaps = {}; // Store maps by ID to filter duplicates
+
+            for (let i = 0; i < cleanedResponse.length; i++) {
+                const body = cleanedResponse[i];
+                if (!body || typeof body !== 'string') continue;
+
+                try {
+                    // First, ensure this is actually a map (not an item or monster)
+                    // Check if the body contains a link to /database/map/
+                    if (!body.includes('/database/map/') && !body.includes('map/')) {
+                        continue; // Skip this entry, it's not a map
+                    }
+                    
+                    // Also skip if it contains item or monster links
+                    if (body.includes('/database/item/') || body.includes('/database/monster/')) {
+                        continue;
+                    }
+                    
+                    let nameMatch = body.match(/alt="([^"]+)"/);
+                    let idMatch = body.match(/\/database\/map\/([a-zA-Z0-9_]+)/);
+                    
+                    if (!nameMatch) {
+                        nameMatch = body.match(/title="([^"]+)"/);
+                    }
+                    
+                    if (!nameMatch) {
+                        // Try to extract from link text
+                        nameMatch = body.match(/>([^<]+)<\/a>/);
+                    }
+                    
+                    if (!idMatch) {
+                        idMatch = body.match(/map[\/=]([a-zA-Z0-9_]+)/);
+                    }
+
+                    if (nameMatch && idMatch) {
+                        let mapName = nameMatch[1]
+                            .replace(/&#(\d+);/g, (match, code) => String.fromCharCode(parseInt(code, 10)))
+                            .replace(/&quot;/g, '"')
+                            .replace(/&amp;/g, '&')
+                            .replace(/&lt;/g, '<')
+                            .replace(/&gt;/g, '>')
+                            .replace(/(\^[0-9|a-z]{6,7})/gi, '') // Remove color codes
+                            .trim();
+                        
+                        // Skip if name is empty or invalid
+                        if (!mapName || mapName.length === 0) {
+                            continue;
+                        }
+                        
+                        // Skip Korean characters (Hangul unicode range: \uAC00-\uD7AF)
+                        if (/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(mapName)) {
+                            logger.debug('Skipping Korean map name', { mapName });
+                            continue;
+                        }
+                        
+                        // Skip names with encoding issues (common patterns)
+                        if (/[\u0000-\u001F\uFFFD]/.test(mapName) || // Control chars or replacement char
+                            mapName.includes('�') || // Replacement character
+                            mapName.includes('&#x') || // Unprocessed HTML entities
+                            /[^\x00-\x7F\u00A0-\u024F\u0400-\u04FF\u2000-\u206F\u3000-\u303F\uFF00-\uFFEF]/.test(mapName)) {
+                            logger.debug('Skipping map with encoding issues', { mapName });
+                            continue;
+                        }
+                        
+                        // Skip placeholder names
+                        if (mapName.toLowerCase().includes('[ph]') ||
+                            mapName.toLowerCase().includes('placeholder') ||
+                            mapName.toLowerCase().includes('unknown') ||
+                            mapName === 'N/A' ||
+                            mapName === '?') {
+                            continue;
+                        }
+
+                        const mapId = idMatch[1];
+                        const mapURL = `https://www.divine-pride.net/database/map/${mapId}`;
+                        
+                        // Check if name is descriptive (different from ID)
+                        const isDescriptive = mapName.toLowerCase() !== mapId.toLowerCase();
+
+                        // Store map, prioritizing descriptive names
+                        if (!tempMaps[mapId] || (isDescriptive && !tempMaps[mapId].isDescriptive)) {
+                            tempMaps[mapId] = {
+                                name: mapName,
+                                id: mapId,
+                                url: mapURL,
+                                isDescriptive: isDescriptive
+                            };
+                        }
+                    } else {
+                        logger.debug('Could not extract map data from HTML fragment', {
+                            index: i,
+                            hasNameMatch: !!nameMatch,
+                            hasIdMatch: !!idMatch,
+                            bodyPreview: body.substring(0, 200)
+                        });
+                    }
+                } catch (parseError) {
+                    logger.warn('Error parsing individual map', { 
+                        index: i, 
+                        error: parseError.message 
+                    });
+                }
+            }
+            
+            // Convert to array and format
+            let mapsFound = 0;
+            for (const mapId in tempMaps) {
+                const map = tempMaps[mapId];
+                parsedResponse.push(`**${map.name}**\n[${map.id}](${map.url})`);
+                mapsFound++;
+            }
+            
+            logger.debug('Parsed maps from response', {
+                searchedWord,
+                totalFragments: cleanedResponse.length,
+                mapsFound: mapsFound
+            });
+
+            const searchURL = `\n\n[🔍 Pesquisa completa](${encodeURI(`https://www.divine-pride.net/database/search?q=${searchedWord}`)})`;
+            parsedResponse.push(searchURL);
+
+            if (parsedResponse.length <= 2 || mapsFound === 0) {
+                logger.warn('No maps found in parsed response', {
+                    searchedWord,
+                    parsedResponseLength: parsedResponse.length,
+                    mapsFound: mapsFound
+                });
+                return reject(new ValidationError('Nenhum resultado', 'Não foram encontrados resultados!'));
+            }
+
+            logger.debug('Map search parsed successfully', { 
+                searchedWord, 
+                resultsCount: parsedResponse.length - 2 
+            });
+
+            resolve(parsedResponse);
+        } catch (error) {
+            logger.error('Error parsing map search response', { 
                 searchedWord, 
                 error: error.message 
             });
@@ -775,6 +1284,8 @@ module.exports = {
     parseWikiResponse,
     parseDatabaseResponse,
     parseDatabaseBodyResponse,
+    parseMonsterSearchBodyResponse,
+    parseMapSearchBodyResponse,
     parseMonsterResponse,
     parseMapResponse
 };

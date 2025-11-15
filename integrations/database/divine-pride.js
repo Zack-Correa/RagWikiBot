@@ -329,9 +329,161 @@ async function skillSearch(skillId, server = null) {
     }
 }
 
+/**
+ * Makes a search query for monsters by name
+ * @param {string} queryString - Search term
+ * @param {string} server - Server identifier
+ * @returns {Promise<Array>} Parsed HTML results
+ * @throws {APIError} If request fails
+ */
+async function makeMonsterSearchQuery(queryString, server) {
+    if (!queryString || !server) {
+        throw new Error('Termo de busca e servidor são obrigatórios');
+    }
+
+    const langCookie = getServerLanguage(server);
+    const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
+    
+    const requestConfig = {
+        method: 'GET',
+        url: queryEndpoint,
+        headers: {},
+        timeout: 10000
+    };
+
+    if (langCookie) {
+        requestConfig.headers['Cookie'] = langCookie;
+    }
+
+    try {
+        logger.debug('Searching monsters', { queryString, server });
+        const response = await axios(requestConfig);
+        
+        if (!response.data) {
+            throw new APIError('Resposta vazia da API', 200, 'Nenhum resultado encontrado.');
+        }
+
+        const parser = require('../../utils/parser');
+        const parsedBody = parser.parseHTMLByRegex(response.data, 'monster');
+        
+        if (!parsedBody) {
+            logger.warn('No monster results from HTML parsing', { 
+                queryString, 
+                server,
+                responseLength: response.data?.length || 0
+            });
+            throw new APIError('Nenhum resultado encontrado', 200, 'Nenhum monstro encontrado para sua busca.');
+        }
+
+        logger.debug('Monster HTML parsed successfully', {
+            queryString,
+            parsedBodyLength: parsedBody.length
+        });
+
+        return parsedBody;
+    } catch (error) {
+        logger.error('Error searching monsters', { queryString, server, error: error.message });
+        
+        if (error.response) {
+            throw new APIError(
+                `Erro na API: ${error.response.status}`,
+                error.response.status,
+                'Erro ao buscar monstros na base de dados.'
+            );
+        }
+        
+        if (error instanceof APIError) {
+            throw error;
+        }
+        
+        throw new APIError(
+            `Erro ao buscar monstros: ${error.message}`,
+            500,
+            'Erro ao buscar monstros na base de dados.'
+        );
+    }
+}
+
+/**
+ * Makes a search query for maps by name
+ * @param {string} queryString - Search term
+ * @param {string} server - Server identifier
+ * @returns {Promise<Array>} Parsed HTML results
+ * @throws {APIError} If request fails
+ */
+async function makeMapSearchQuery(queryString, server) {
+    if (!queryString || !server) {
+        throw new Error('Termo de busca e servidor são obrigatórios');
+    }
+
+    const langCookie = getServerLanguage(server);
+    const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
+    
+    const requestConfig = {
+        method: 'GET',
+        url: queryEndpoint,
+        headers: {},
+        timeout: 10000
+    };
+
+    if (langCookie) {
+        requestConfig.headers['Cookie'] = langCookie;
+    }
+
+    try {
+        logger.debug('Searching maps', { queryString, server });
+        const response = await axios(requestConfig);
+        
+        if (!response.data) {
+            throw new APIError('Resposta vazia da API', 200, 'Nenhum resultado encontrado.');
+        }
+
+        const parser = require('../../utils/parser');
+        const parsedBody = parser.parseHTMLByRegex(response.data, 'map');
+        
+        if (!parsedBody) {
+            logger.warn('No map results from HTML parsing', { 
+                queryString, 
+                server,
+                responseLength: response.data?.length || 0
+            });
+            throw new APIError('Nenhum resultado encontrado', 200, 'Nenhum mapa encontrado para sua busca.');
+        }
+
+        logger.debug('Map HTML parsed successfully', {
+            queryString,
+            parsedBodyLength: parsedBody.length
+        });
+
+        return parsedBody;
+    } catch (error) {
+        logger.error('Error searching maps', { queryString, server, error: error.message });
+        
+        if (error.response) {
+            throw new APIError(
+                `Erro na API: ${error.response.status}`,
+                error.response.status,
+                'Erro ao buscar mapas na base de dados.'
+            );
+        }
+        
+        if (error instanceof APIError) {
+            throw error;
+        }
+        
+        throw new APIError(
+            `Erro ao buscar mapas: ${error.message}`,
+            500,
+            'Erro ao buscar mapas na base de dados.'
+        );
+    }
+}
+
 module.exports = {
     makeItemIdRequest,
     makeSearchQuery,
+    makeMonsterSearchQuery,
+    makeMapSearchQuery,
     monsterSearch,
     mapSearch,
     skillSearch

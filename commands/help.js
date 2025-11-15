@@ -37,8 +37,18 @@ module.exports = {
                     inline: false
                 },
                 {
+                    name: '/buscar-monstro-nome',
+                    value: 'Busca monstros pelo nome no banco de dados Divine Pride\n`/buscar-monstro-nome nome:Poring servidor:iro`',
+                    inline: false
+                },
+                {
                     name: '/buscar-mapa',
                     value: 'Busca informações de um mapa pelo ID\n`/buscar-mapa id:hu_fild03`',
+                    inline: false
+                },
+                {
+                    name: '/buscar-mapa-nome',
+                    value: 'Busca mapas pelo nome no banco de dados Divine Pride\n`/buscar-mapa-nome nome:Prontera servidor:iro`',
                     inline: false
                 },
                 {
