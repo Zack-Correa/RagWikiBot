@@ -5,9 +5,9 @@
  */
 
 const { REST, Routes } = require('discord.js');
-const config = require('./config');
-const InteractionHandler = require('./handlers/interactionHandler');
-const logger = require('./utils/logger');
+const config = require('../config');
+const InteractionHandler = require('../handlers/interactionHandler');
+const logger = require('../utils/logger');
 
 // Determine if deploying to a specific guild (for testing) or globally
 const GUILD_ID = process.env.GUILD_ID; // Optional: set for guild-specific commands (faster updates)

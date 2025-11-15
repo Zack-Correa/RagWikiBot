@@ -16,7 +16,6 @@ const ENDPOINTS = {
     MONSTER: settings.endpoints[4].url,
     MAP: settings.endpoints[5].url,
     SKILL: settings.endpoints[6].url,
-    SET_SERVER: 'https://www.divine-pride.net/Api/Regions/SetServer',
     REFRESH_LANGUAGE: 'https://www.divine-pride.net/Api/Regions/RefreshLanguage/'
 };
 
@@ -59,45 +58,64 @@ async function setupScrapingCookies(language) {
     }
     
     try {
-        // Step 1: Set server to LATAM
-        logger.debug('Setting Divine Pride server to LATAM', { language });
-        const serverResponse = await axios.post(
-            ENDPOINTS.SET_SERVER,
-            { server: 'LATAM' }, // Always use LATAM server
-            {
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
+        let languageCode = language.toLowerCase();
         
-        let cookies = extractCookies(serverResponse);
+        // Map language codes to Divine Pride's expected format
+        const languageMap = {
+            'pt-br': 'pt',
+            'en': 'en',
+            'es': 'es'
+        };
         
-        // Step 2: Refresh language
-        logger.debug('Refreshing Divine Pride language', { language });
-        const languageConfig = config.languages[language.toLowerCase()];
-        if (!languageConfig) {
-            logger.warn('Invalid language, using default pt-br', { language });
-        }
+        const dpLanguage = languageMap[languageCode] || 'pt';
         
+        // Step 1: Set the lang cookie manually
+        const initialCookie = `lang=${dpLanguage}`;
+        
+        logger.debug('Calling Divine Pride RefreshLanguage', { 
+            language, 
+            dpLanguage,
+            endpoint: ENDPOINTS.REFRESH_LANGUAGE,
+            initialCookie
+        });
+        
+        // Step 2: Call REFRESH_LANGUAGE endpoint with the lang cookie
         const languageResponse = await axios.post(
             ENDPOINTS.REFRESH_LANGUAGE,
-            { language: language.toLowerCase() },
+            { language: dpLanguage },
             {
                 headers: {
                     'Content-Type': 'application/json',
-                    'Cookie': cookies
+                    'Cookie': initialCookie
                 },
                 timeout: 10000
             }
         );
         
-        // Merge cookies from both requests
-        const languageCookies = extractCookies(languageResponse);
-        if (languageCookies) {
-            cookies = cookies ? `${cookies}; ${languageCookies}` : languageCookies;
+        logger.debug('RefreshLanguage response received', {
+            status: languageResponse.status,
+            hasSetCookie: !!languageResponse.headers['set-cookie'],
+            setCookieCount: languageResponse.headers['set-cookie']?.length || 0
+        });
+        
+        // Step 3: Extract cookies from response
+        const responseCookies = extractCookies(languageResponse);
+        
+        logger.debug('Cookies extracted from response', {
+            responseCookies: responseCookies || '(empty)',
+            initialCookie
+        });
+        
+        // Merge the initial lang cookie with any cookies returned
+        // IMPORTANT: We must keep the lang=XX cookie!
+        let cookies = initialCookie;
+        if (responseCookies) {
+            cookies = `${initialCookie}; ${responseCookies}`;
         }
+        
+        logger.debug('Final merged cookies', {
+            finalCookies: cookies
+        });
         
         // Cache the cookies
         cookieCache.set(cacheKey, {
@@ -107,8 +125,9 @@ async function setupScrapingCookies(language) {
         
         logger.debug('Divine Pride cookies configured', { 
             language, 
+            dpLanguage, 
             cacheKey,
-            hasCookies: !!cookies 
+            hasCookies: !!cookies
         });
         
         return cookies;
@@ -118,8 +137,14 @@ async function setupScrapingCookies(language) {
             error: error.message 
         });
         
-        // Return empty string on error, allowing scraping to proceed without cookies
-        return '';
+        // Return basic lang cookie to allow request to proceed
+        const languageMap = {
+            'pt-br': 'pt',
+            'en': 'en',
+            'es': 'es'
+        };
+        const dpLanguage = languageMap[language.toLowerCase()] || 'pt';
+        return `lang=${dpLanguage}`;
     }
 }
 
@@ -452,10 +477,16 @@ async function makeMonsterSearchQuery(queryString, language) {
         
         const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
         
+        // Get Accept-Language header for the selected language
+        const languageConfig = config.languages[language.toLowerCase()];
+        const acceptLanguage = languageConfig?.acceptLanguage || 'pt-BR';
+        
         const requestConfig = {
             method: 'GET',
             url: queryEndpoint,
-            headers: {},
+            headers: {
+                'Accept-Language': acceptLanguage
+            },
             timeout: 10000
         };
 
@@ -463,7 +494,14 @@ async function makeMonsterSearchQuery(queryString, language) {
             requestConfig.headers['Cookie'] = cookies;
         }
 
-        logger.debug('Searching monsters', { queryString, language, hasCookies: !!cookies });
+        logger.debug('Searching monsters', { 
+            queryString, 
+            language, 
+            acceptLanguage,
+            cookies,
+            hasCookies: !!cookies 
+        });
+        
         const response = await axios(requestConfig);
         
         if (!response.data) {
@@ -530,10 +568,16 @@ async function makeMapSearchQuery(queryString, language) {
         
         const queryEndpoint = `${ENDPOINTS.SEARCH}${encodeURIComponent(queryString)}`;
         
+        // Get Accept-Language header for the selected language
+        const languageConfig = config.languages[language.toLowerCase()];
+        const acceptLanguage = languageConfig?.acceptLanguage || 'pt-BR';
+        
         const requestConfig = {
             method: 'GET',
             url: queryEndpoint,
-            headers: {},
+            headers: {
+                'Accept-Language': acceptLanguage
+            },
             timeout: 10000
         };
 
@@ -541,7 +585,14 @@ async function makeMapSearchQuery(queryString, language) {
             requestConfig.headers['Cookie'] = cookies;
         }
 
-        logger.debug('Searching maps', { queryString, language, hasCookies: !!cookies });
+        logger.debug('Searching maps', { 
+            queryString, 
+            language, 
+            acceptLanguage,
+            cookies,
+            hasCookies: !!cookies 
+        });
+        
         const response = await axios(requestConfig);
         
         if (!response.data) {

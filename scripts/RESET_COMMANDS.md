@@ -19,7 +19,7 @@ npm run reset
 ```
 ou
 ```bash
-node reset-commands.js
+node scripts/reset-commands.js
 ```
 
 ### Opção 2: Remover E registrar comandos corretos (recomendado)
@@ -29,13 +29,13 @@ npm run reset:deploy
 ```
 ou
 ```bash
-node reset-commands.js --deploy
+node scripts/reset-commands.js --deploy
 ```
 
 ### Opção 3: Remover comandos de uma guild específica
 
 ```bash
-node reset-commands.js --guild GUILD_ID
+node scripts/reset-commands.js --guild GUILD_ID
 ```
 
 Substitua `GUILD_ID` pelo ID do servidor Discord.
@@ -43,7 +43,7 @@ Substitua `GUILD_ID` pelo ID do servidor Discord.
 ### Opção 4: Remover comandos de uma guild específica E re-registrar
 
 ```bash
-node reset-commands.js --guild GUILD_ID --deploy
+node scripts/reset-commands.js --guild GUILD_ID --deploy
 ```
 
 ## 🔍 Como encontrar o Guild ID?

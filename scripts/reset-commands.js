@@ -3,14 +3,14 @@
  * Removes ALL existing commands (global and guild-specific) and optionally redeploys clean commands
  * 
  * Usage:
- * - Remove only: node reset-commands.js
- * - Remove and redeploy: node reset-commands.js --deploy
- * - Remove guild-specific commands: node reset-commands.js --guild GUILD_ID
+ * - Remove only: node scripts/reset-commands.js
+ * - Remove and redeploy: node scripts/reset-commands.js --deploy
+ * - Remove guild-specific commands: node scripts/reset-commands.js --guild GUILD_ID
  */
 
 const { REST, Routes, Client, GatewayIntentBits } = require('discord.js');
-const config = require('./config');
-const logger = require('./utils/logger');
+const config = require('../config');
+const logger = require('../utils/logger');
 const { deployCommands } = require('./deploy-commands');
 
 // Parse command line arguments
@@ -213,7 +213,7 @@ async function resetCommands() {
             console.log('═══════════════════════════════════════════════════════\n');
         } else {
             console.log('💡 Para registrar os comandos corretos novamente, execute:');
-            console.log('   node reset-commands.js --deploy');
+            console.log('   node scripts/reset-commands.js --deploy');
             console.log('   OU');
             console.log('   npm run reset -- --deploy\n');
         }
