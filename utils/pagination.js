@@ -5,6 +5,7 @@
 
 const { EmbedBuilder } = require('discord.js');
 const logger = require('./logger');
+const i18n = require('./i18n');
 
 // Emoji constants
 const EMOJIS = {
@@ -24,6 +25,7 @@ const EMOJIS = {
  * @param {string} options.thumbnail - Thumbnail URL
  * @param {string} options.searchTerm - Search term for display
  * @param {string} options.searchURL - Full search URL
+ * @param {string} options.language - Language code for translations (default: 'pt-br')
  * @param {number} options.timeout - Timeout in milliseconds (default: 180000 = 3 minutes)
  * @returns {Object} Object with embed and page info
  */
@@ -31,10 +33,11 @@ function createPaginatedEmbed(options) {
     const {
         items,
         itemsPerPage = 10,
-        title = 'Resultado da pesquisa',
+        title,
         thumbnail,
         searchTerm,
         searchURL,
+        language = 'pt-br',
         timeout = 180000
     } = options;
 
@@ -42,7 +45,7 @@ function createPaginatedEmbed(options) {
     const currentPage = 1;
 
     return {
-        embed: buildEmbed(items, currentPage, totalPages, itemsPerPage, title, thumbnail, searchTerm, searchURL),
+        embed: buildEmbed(items, currentPage, totalPages, itemsPerPage, title, thumbnail, searchTerm, searchURL, language),
         totalPages,
         currentPage,
         items,
@@ -51,6 +54,7 @@ function createPaginatedEmbed(options) {
         thumbnail,
         searchTerm,
         searchURL,
+        language,
         timeout
     };
 }
@@ -65,9 +69,11 @@ function createPaginatedEmbed(options) {
  * @param {string} thumbnail - Thumbnail URL
  * @param {string} searchTerm - Search term
  * @param {string} searchURL - Full search URL
+ * @param {string} language - Language code for translations
  * @returns {EmbedBuilder} Built embed
  */
-function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, searchTerm, searchURL) {
+function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, searchTerm, searchURL, language = 'pt-br') {
+    const t = i18n.getLanguage(language);
     const startIndex = (page - 1) * itemsPerPage;
     const endIndex = Math.min(startIndex + itemsPerPage, items.length);
     const pageItems = items.slice(startIndex, endIndex);
@@ -76,7 +82,7 @@ function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, sea
         .setColor('#0099ff')
         .setTitle(title)
         .setTimestamp()
-        .setFooter({ text: `Página ${page}/${totalPages}` });
+        .setFooter({ text: `${t.search.page} ${page}/${totalPages}` });
 
     if (thumbnail) {
         embed.setThumbnail(thumbnail);
@@ -84,8 +90,8 @@ function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, sea
 
     if (pageItems.length === 0) {
         embed.addFields({
-            name: `Resultados para "${searchTerm}"`,
-            value: 'Nenhum resultado encontrado'
+            name: `${t.search.resultsFor} "${searchTerm}"`,
+            value: t.search.noResults
         });
     } else {
         // Build result text
@@ -102,7 +108,7 @@ function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, sea
         if (resultText.length <= MAX_FIELD_LENGTH) {
             // Single field - all items fit
             embed.addFields({
-                name: `Resultados para "${searchTerm}" (${items.length} encontrado${items.length > 1 ? 's' : ''})`,
+                name: `${t.search.resultsFor} "${searchTerm}" (${items.length} ${t.search.found})`,
                 value: resultText
             });
         } else {
@@ -130,8 +136,8 @@ function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, sea
             fields.forEach((fieldContent, index) => {
                 const isLast = index === fields.length - 1;
                 const fieldName = fields.length > 1
-                    ? `Resultados para "${searchTerm}" (${index + 1}/${fields.length})`
-                    : `Resultados para "${searchTerm}" (${items.length} encontrado${items.length > 1 ? 's' : ''})`;
+                    ? `${t.search.resultsFor} "${searchTerm}" (${index + 1}/${fields.length})`
+                    : `${t.search.resultsFor} "${searchTerm}" (${items.length} ${t.search.found})`;
                 
                 let value = fieldContent;
                 if (isLast && page === totalPages && searchURL) {
@@ -149,7 +155,7 @@ function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, sea
     // Add Divine Pride credit at the bottom
     embed.addFields({
         name: '\u200b',
-        value: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*'
+        value: t.credits.divinePride
     });
 
     return embed;
@@ -237,7 +243,8 @@ async function setupPagination(message, paginationData) {
                     paginationData.title,
                     paginationData.thumbnail,
                     paginationData.searchTerm,
-                    paginationData.searchURL
+                    paginationData.searchURL,
+                    paginationData.language
                 );
 
                 await message.edit({ embeds: [newEmbed] }).catch(error => {

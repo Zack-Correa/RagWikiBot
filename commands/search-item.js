@@ -83,6 +83,7 @@ module.exports = {
                 thumbnail: thumbnail,
                 searchTerm: searchedWord,
                 searchURL: searchURL,
+                language: language,
                 timeout: 180000 // 3 minutes
             });
 
