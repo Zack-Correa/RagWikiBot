@@ -25,7 +25,7 @@ const EMOJIS = {
  * @param {string} options.thumbnail - Thumbnail URL
  * @param {string} options.searchTerm - Search term for display
  * @param {string} options.searchURL - Full search URL
- * @param {string} options.language - Language code for translations (default: 'pt-br')
+ * @param {string} options.language - Language code for translations (default: 'pt')
  * @param {number} options.timeout - Timeout in milliseconds (default: 180000 = 3 minutes)
  * @returns {Object} Object with embed and page info
  */
@@ -37,7 +37,7 @@ function createPaginatedEmbed(options) {
         thumbnail,
         searchTerm,
         searchURL,
-        language = 'pt-br',
+        language = 'pt',
         timeout = 180000
     } = options;
 
@@ -72,7 +72,7 @@ function createPaginatedEmbed(options) {
  * @param {string} language - Language code for translations
  * @returns {EmbedBuilder} Built embed
  */
-function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, searchTerm, searchURL, language = 'pt-br') {
+function buildEmbed(items, page, totalPages, itemsPerPage, title, thumbnail, searchTerm, searchURL, language = 'pt') {
     const t = i18n.getLanguage(language);
     const startIndex = (page - 1) * itemsPerPage;
     const endIndex = Math.min(startIndex + itemsPerPage, items.length);

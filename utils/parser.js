@@ -6,12 +6,14 @@
 const logger = require('./logger');
 const { ValidationError } = require('./errors');
 const i18n = require('./i18n');
+const htmlParser = require('./htmlParser');
+const { cleanString, sanitizeName } = require('./stringCleaner');
 
 /**
- * Parses HTML content using regex to extract item, monster, or map information
+ * Parses HTML content using Cheerio to extract item, monster, or map information
  * @param {string} html - HTML content to parse
  * @param {string} type - Type of entity to search for: 'item', 'monster', or 'map' (default: 'item')
- * @returns {Array<string>|null} Parsed HTML fragments or null if no matches
+ * @returns {Array<{name: string, id: string, url: string}>|null} Parsed entities or null if no matches
  */
 function parseHTMLByRegex(html, type = 'item') {
     if (!html || typeof html !== 'string') {
@@ -20,84 +22,34 @@ function parseHTMLByRegex(html, type = 'item') {
     }
 
     try {
-        let regexp;
-        let parsedHTML = null;
+        let results;
         
-        // Define patterns based on entity type
+        // Use Cheerio-based parsers based on entity type
         if (type === 'monster') {
-            // Try to find the monster section in the HTML first
-            // Look for rows (tr) that contain monster links specifically
-            regexp = /<tr[^>]*>[\s\S]*?\/database\/monster\/\d+[\s\S]*?<\/tr>/gi;
-            parsedHTML = html.match(regexp);
-            
-            // If that doesn't work, try table cells with monster links
-            if (!parsedHTML || parsedHTML.length === 0) {
-                regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*\/database\/monster\/\d+[^>]*>[\s\S]*?<\/td>/gi;
-                parsedHTML = html.match(regexp);
-            }
-            
-            // Last resort: any element containing monster link
-            if (!parsedHTML || parsedHTML.length === 0) {
-                regexp = /<a[^>]*href="[^"]*\/database\/monster\/(\d+)"[^>]*>([\s\S]*?)<\/a>/gi;
-                parsedHTML = html.match(regexp);
-            }
+            results = htmlParser.parseMonstersFromHTML(html);
         } else if (type === 'map') {
-            // Try to find the map section in the HTML first
-            // Look for rows (tr) that contain map links specifically
-            regexp = /<tr[^>]*>[\s\S]*?\/database\/map\/[a-zA-Z0-9_]+[\s\S]*?<\/tr>/gi;
-            parsedHTML = html.match(regexp);
-            
-            // If that doesn't work, try table cells with map links
-            if (!parsedHTML || parsedHTML.length === 0) {
-                regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*\/database\/map\/[a-zA-Z0-9_]+[^>]*>[\s\S]*?<\/td>/gi;
-                parsedHTML = html.match(regexp);
-            }
-            
-            // Last resort: any element containing map link
-            if (!parsedHTML || parsedHTML.length === 0) {
-                regexp = /<a[^>]*href="[^"]*\/database\/map\/([a-zA-Z0-9_]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-                parsedHTML = html.match(regexp);
-            }
+            results = htmlParser.parseMapsFromHTML(html);
         } else {
-            // Default: item patterns
-            // Pattern 1: Original pattern
-            regexp = /<td>[\n\r]\s*<img(<a href)*((.|[\n\r])*?(<\/td>))/g;
-            parsedHTML = html.match(regexp);
-            
-            // Pattern 2: More flexible pattern for table cells with links
-            if (!parsedHTML || parsedHTML.length === 0) {
-                regexp = /<td[^>]*>[\s\S]*?<a[^>]*href[^>]*item[^>]*>[\s\S]*?<\/td>/gi;
-                parsedHTML = html.match(regexp);
-            }
-            
-            // Pattern 3: Look for any table cell containing item links
-            if (!parsedHTML || parsedHTML.length === 0) {
-                regexp = /<td[^>]*>[\s\S]{0,500}?item\/\d+[\s\S]{0,500}?<\/td>/gi;
-                parsedHTML = html.match(regexp);
-            }
+            // Default: items
+            results = htmlParser.parseItemsFromHTML(html);
         }
         
-        if (!parsedHTML || parsedHTML.length === 0) {
-            logger.debug('No matches found with any regex pattern', {
+        if (!results || results.length === 0) {
+            logger.debug('No matches found with HTML parser', {
                 type,
-                htmlLength: html.length,
-                htmlPreview: html.substring(0, 1000)
+                htmlLength: html.length
             });
             return null;
         }
 
-        // Split by <td> and filter empty items
-        const result = parsedHTML.toString().split('<td>').filter(item => item.trim().length > 0);
-        
-        logger.debug('HTML parsed successfully', {
+        logger.debug('HTML parsed successfully with Cheerio', {
             type,
-            matchesFound: parsedHTML.length,
-            resultLength: result.length
+            matchesFound: results.length
         });
         
-        return result;
+        return results;
     } catch (error) {
-        logger.error('Error parsing HTML by regex', { type, error: error.message });
+        logger.error('Error parsing HTML', { type, error: error.message });
         return null;
     }
 }
@@ -323,10 +275,10 @@ function parseWikiResponse(response) {
  * Parses database response for item by ID
  * @param {Object} response - API response object
  * @param {string} itemId - Item ID for URL generation
- * @param {string} language - Language code for translations (default: 'pt-br')
+ * @param {string} language - Language code for translations (default: 'pt')
  * @returns {Promise<string>} Formatted item information
  */
-function parseDatabaseResponse(response, itemId, language = 'pt-br') {
+function parseDatabaseResponse(response, itemId, language = 'pt') {
     return new Promise((resolve, reject) => {
         if (!response) {
             return reject(new ValidationError('Resposta vazia', 'Item não encontrado.'));
@@ -453,10 +405,10 @@ function parseDatabaseResponse(response, itemId, language = 'pt-br') {
  * Parses database search response (HTML)
  * @param {string} searchedWord - Original search term
  * @param {Array<string>} response - Parsed HTML response array
- * @param {string} language - Language code for translations (default: 'pt-br')
+ * @param {string} language - Language code for translations (default: 'pt')
  * @returns {Promise<Array<string>>} Parsed response with search term and results
  */
-function parseDatabaseBodyResponse(searchedWord, response, language = 'pt-br') {
+function parseDatabaseBodyResponse(searchedWord, response, language = 'pt') {
     const t = i18n.getLanguage(language);
     return new Promise((resolve, reject) => {
         if (!searchedWord) {
@@ -474,90 +426,33 @@ function parseDatabaseBodyResponse(searchedWord, response, language = 'pt-br') {
         try {
             const parsedResponse = [searchedWord];
 
-            // Remove first element (usually empty or garbage)
-            const cleanedResponse = response.slice(1);
-
-            // Process all results (Discord embed field limit is 1024 chars, we'll handle splitting if needed)
+            // Parse items using optimized Cheerio-based parser
+            let items = response;
+            
+            // Check if response contains raw entities (from new parser) or HTML strings (legacy)
+            if (response.length > 0 && typeof response[0] === 'object' && response[0].name) {
+                // Already parsed entities from new htmlParser
+                items = response;
+            } else {
+                // Legacy HTML strings - parse with Cheerio
+                const htmlContent = response.join('');
+                items = htmlParser.parseItemsFromHTML(htmlContent);
+            }
+            
+            // Format items for display
             let itemsFound = 0;
-            for (let i = 0; i < cleanedResponse.length; i++) {
-                const body = cleanedResponse[i];
-                if (!body || typeof body !== 'string') continue;
-
-                try {
-                    // Try multiple patterns to extract item name and ID
-                    // Pattern 1: alt="Item Name" and href with item/ID
-                    let nameMatch = body.match(/alt="([^"]+)"/);
-                    let idMatch = body.match(/item\/(\d+)/);
-                    
-                    // Pattern 2: Try href pattern with title
-                    if (!nameMatch) {
-                        nameMatch = body.match(/title="([^"]+)"/);
-                    }
-                    
-                    // Pattern 3: Try href with item ID in different format
-                    if (!idMatch) {
-                        idMatch = body.match(/href="[^"]*item[\/=](\d+)/);
-                    }
-                    
-                    // Pattern 4: Try to find item ID anywhere in the string
-                    if (!idMatch) {
-                        idMatch = body.match(/(?:item|id)[\/=](\d+)/i);
-                    }
-
-                    if (nameMatch && idMatch) {
-                        let itemName = nameMatch[1]
-                            .replace(/&#(\d+);/g, (match, code) => {
-                                return String.fromCharCode(parseInt(code, 10));
-                            })
-                            .replace(/&quot;/g, '"')
-                            .replace(/&amp;/g, '&')
-                            .replace(/&lt;/g, '<')
-                            .replace(/&gt;/g, '>')
-                            .trim();
-
-                        // Filter out placeholder/invalid names
-                        const invalidPatterns = [
-                            /we don't have this yet/i,
-                            /sem dados ainda/i,
-                            /no data yet/i,
-                            /sin datos todavía/i,
-                            /^\s*:\(/,  // Just emoticons
-                            /^\s*\?\s*$/  // Just question marks
-                        ];
-                        
-                        const isInvalid = invalidPatterns.some(pattern => pattern.test(itemName));
-                        if (isInvalid) {
-                            logger.debug('Skipping invalid/placeholder item name', { itemName });
-                            continue;
-                        }
-
-                        const itemId = idMatch[1];
-                        const itemURL = `https://www.divine-pride.net/database/item/${itemId}`;
-
-                        // Format: [Item Name](URL)
-                        parsedResponse.push(`[${itemName}](${itemURL})`);
-                        itemsFound++;
-                    } else {
-                        // Log for debugging if we have HTML but can't parse it
-                        logger.debug('Could not extract item data from HTML fragment', {
-                            index: i,
-                            hasNameMatch: !!nameMatch,
-                            hasIdMatch: !!idMatch,
-                            bodyPreview: body.substring(0, 200)
-                        });
-                    }
-                } catch (parseError) {
-                    logger.warn('Error parsing individual item', { 
-                        index: i, 
-                        error: parseError.message 
-                    });
-                    // Continue with next item
+            for (const item of items) {
+                if (item && item.name && item.id) {
+                    const cleanName = sanitizeName(item.name);
+                    const itemURL = item.url || `https://www.divine-pride.net/database/item/${item.id}`;
+                    parsedResponse.push(`[${cleanName}](${itemURL})`);
+                    itemsFound++;
                 }
             }
             
             logger.debug('Parsed items from response', {
                 searchedWord,
-                totalFragments: cleanedResponse.length,
+                totalItems: items.length,
                 itemsFound: itemsFound
             });
 
@@ -597,10 +492,10 @@ function parseDatabaseBodyResponse(searchedWord, response, language = 'pt-br') {
  * Parses search results for monsters
  * @param {string} searchedWord - The search term
  * @param {Array} response - Array of parsed HTML fragments
- * @param {string} language - Language code for translations (default: 'pt-br')
+ * @param {string} language - Language code for translations (default: 'pt')
  * @returns {Promise<Array>} Formatted results array
  */
-function parseMonsterSearchBodyResponse(searchedWord, response, language = 'pt-br') {
+function parseMonsterSearchBodyResponse(searchedWord, response, language = 'pt') {
     return new Promise(async (resolve, reject) => {
         const t = i18n.getLanguage(language);
         
@@ -618,134 +513,42 @@ function parseMonsterSearchBodyResponse(searchedWord, response, language = 'pt-b
 
         try {
             const parsedResponse = [searchedWord];
-            const cleanedResponse = response.slice(1);
-            let monstersFound = 0;
             const tempMonsters = []; // Store temporarily to check MVP status
 
-            for (let i = 0; i < cleanedResponse.length; i++) {
-                const body = cleanedResponse[i];
-                if (!body || typeof body !== 'string') continue;
-
-                try {
-                    // First, ensure this is actually a monster (not an item or map)
-                    // Check if the body contains a link to /database/monster/
-                    if (!body.includes('/database/monster/') && !body.includes('monster/')) {
-                        continue; // Skip this entry, it's not a monster
-                    }
-                    
-                    // Also skip if it contains item or map links
-                    if (body.includes('/database/item/') || body.includes('/database/map/')) {
-                        continue;
-                    }
-                    
-                    let nameMatch = body.match(/alt="([^"]+)"/);
-                    let idMatch = body.match(/\/database\/monster\/(\d+)/);
-                    
-                    if (!nameMatch) {
-                        nameMatch = body.match(/title="([^"]+)"/);
-                    }
-                    
-                    if (!nameMatch) {
-                        // Try to extract from link text
-                        nameMatch = body.match(/>([^<]+)<\/a>/);
-                    }
-                    
-                    if (!idMatch) {
-                        idMatch = body.match(/monster[\/=](\d+)/);
-                    }
-
-                    if (nameMatch && idMatch) {
-                        let monsterName = nameMatch[1]
-                            .replace(/&#(\d+);/g, (match, code) => String.fromCharCode(parseInt(code, 10)))
-                            .replace(/&quot;/g, '"')
-                            .replace(/&amp;/g, '&')
-                            .replace(/&lt;/g, '<')
-                            .replace(/&gt;/g, '>')
-                            .replace(/(\^[0-9|a-z]{6,7})/gi, '') // Remove color codes
-                            .trim();
-                        
-                        // Skip if name is empty or invalid
-                        if (!monsterName || monsterName.length === 0) {
-                            continue;
-                        }
-                        
-                        // Skip Korean characters (Hangul unicode range: \uAC00-\uD7AF)
-                        if (/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(monsterName)) {
-                            logger.debug('Skipping Korean monster name', { monsterName });
-                            continue;
-                        }
-                        
-                        // Skip names with encoding issues (common patterns)
-                        if (/[\u0000-\u001F\uFFFD]/.test(monsterName) || // Control chars or replacement char
-                            monsterName.includes('�') || // Replacement character
-                            monsterName.includes('&#x') || // Unprocessed HTML entities
-                            /[^\x00-\x7F\u00A0-\u024F\u0400-\u04FF\u2000-\u206F\u3000-\u303F\uFF00-\uFFEF]/.test(monsterName)) {
-                            logger.debug('Skipping monster with encoding issues', { monsterName });
-                            continue;
-                        }
-                        
-                        // Skip placeholder names
-                        if (monsterName.toLowerCase().includes('[ph]') ||
-                            monsterName.toLowerCase().includes('placeholder') ||
-                            monsterName.toLowerCase().includes('unknown') ||
-                            monsterName === 'N/A' ||
-                            monsterName === '?') {
-                            continue;
-                        }
-                        
-                        // Filter out "We don't have this yet" and similar placeholders
-                        const invalidPatterns = [
-                            /we don't have this yet/i,
-                            /sem dados ainda/i,
-                            /no data yet/i,
-                            /sin datos todavía/i,
-                            /^\s*:\(/,  // Just emoticons
-                            /^\s*\?\s*$/  // Just question marks
-                        ];
-                        
-                        const isInvalid = invalidPatterns.some(pattern => pattern.test(monsterName));
-                        if (isInvalid) {
-                            logger.debug('Skipping invalid/placeholder monster name', { monsterName });
-                            continue;
-                        }
-
-                        const monsterId = idMatch[1];
-                        const monsterURL = `https://www.divine-pride.net/database/monster/${monsterId}`;
-
-                        tempMonsters.push({
-                            name: monsterName,
-                            id: monsterId,
-                            url: monsterURL
-                        });
-                        monstersFound++;
-                    } else {
-                        logger.debug('Could not extract monster data from HTML fragment', {
-                            index: i,
-                            hasNameMatch: !!nameMatch,
-                            hasIdMatch: !!idMatch,
-                            bodyPreview: body.substring(0, 200)
-                        });
-                    }
-                } catch (parseError) {
-                    logger.warn('Error parsing individual monster', { 
-                        index: i, 
-                        error: parseError.message 
+            // Parse monsters using optimized Cheerio-based parser
+            let monsters = response;
+            
+            // Check if response contains raw entities (from new parser) or HTML strings (legacy)
+            if (response.length > 0 && typeof response[0] === 'object' && response[0].name) {
+                // Already parsed entities from new htmlParser
+                monsters = response;
+            } else {
+                // Legacy HTML strings - parse with Cheerio
+                const htmlContent = response.join('');
+                monsters = htmlParser.parseMonstersFromHTML(htmlContent);
+            }
+            
+            // Store valid monsters
+            for (const monster of monsters) {
+                if (monster && monster.name && monster.id) {
+                    const cleanName = sanitizeName(monster.name);
+                    const monsterURL = monster.url || `https://www.divine-pride.net/database/monster/${monster.id}`;
+                    tempMonsters.push({
+                        name: cleanName,
+                        id: monster.id,
+                        url: monsterURL
                     });
                 }
             }
             
             logger.debug('Parsed monsters from response', {
                 searchedWord,
-                totalFragments: cleanedResponse.length,
-                monstersFound: monstersFound
+                totalMonsters: monsters.length,
+                monstersFound: tempMonsters.length
             });
 
-            if (monstersFound === 0) {
-                logger.warn('No monsters found in parsed response', {
-                    searchedWord,
-                    parsedResponseLength: parsedResponse.length,
-                    monstersFound: monstersFound
-                });
+            if (tempMonsters.length === 0) {
+                logger.warn('No monsters found in parsed response', { searchedWord });
                 return reject(new ValidationError('Nenhum resultado', 'Não foram encontrados resultados!'));
             }
 
@@ -824,10 +627,10 @@ function parseMonsterSearchBodyResponse(searchedWord, response, language = 'pt-b
  * Parses search results for maps
  * @param {string} searchedWord - The search term
  * @param {Array} response - Array of parsed HTML fragments
- * @param {string} language - Language code for translations (default: 'pt-br')
+ * @param {string} language - Language code for translations (default: 'pt')
  * @returns {Promise<Array>} Formatted results array
  */
-function parseMapSearchBodyResponse(searchedWord, response, language = 'pt-br') {
+function parseMapSearchBodyResponse(searchedWord, response, language = 'pt') {
     return new Promise((resolve, reject) => {
         const t = i18n.getLanguage(language);
         
@@ -845,124 +648,37 @@ function parseMapSearchBodyResponse(searchedWord, response, language = 'pt-br') 
 
         try {
             const parsedResponse = [searchedWord];
-            const cleanedResponse = response.slice(1);
             const tempMaps = {}; // Store maps by ID to filter duplicates
 
-            for (let i = 0; i < cleanedResponse.length; i++) {
-                const body = cleanedResponse[i];
-                if (!body || typeof body !== 'string') continue;
-
-                try {
-                    // First, ensure this is actually a map (not an item or monster)
-                    // Check if the body contains a link to /database/map/
-                    if (!body.includes('/database/map/') && !body.includes('map/')) {
-                        continue; // Skip this entry, it's not a map
-                    }
+            // Parse maps using optimized Cheerio-based parser
+            let maps = response;
+            
+            // Check if response contains raw entities (from new parser) or HTML strings (legacy)
+            if (response.length > 0 && typeof response[0] === 'object' && response[0].name) {
+                // Already parsed entities from new htmlParser
+                maps = response;
+            } else {
+                // Legacy HTML strings - parse with Cheerio
+                const htmlContent = response.join('');
+                maps = htmlParser.parseMapsFromHTML(htmlContent);
+            }
+            
+            // Store maps, prioritizing descriptive names
+            for (const map of maps) {
+                if (map && map.name && map.id) {
+                    const cleanName = sanitizeName(map.name);
+                    const mapURL = map.url || `https://www.divine-pride.net/database/map/${map.id}`;
+                    const isDescriptive = cleanName.toLowerCase() !== map.id.toLowerCase();
                     
-                    // Also skip if it contains item or monster links
-                    if (body.includes('/database/item/') || body.includes('/database/monster/')) {
-                        continue;
+                    // Store map, prioritizing descriptive names
+                    if (!tempMaps[map.id] || (isDescriptive && !tempMaps[map.id].isDescriptive)) {
+                        tempMaps[map.id] = {
+                            name: cleanName,
+                            id: map.id,
+                            url: mapURL,
+                            isDescriptive: isDescriptive
+                        };
                     }
-                    
-                    let nameMatch = body.match(/alt="([^"]+)"/);
-                    let idMatch = body.match(/\/database\/map\/([a-zA-Z0-9_]+)/);
-                    
-                    if (!nameMatch) {
-                        nameMatch = body.match(/title="([^"]+)"/);
-                    }
-                    
-                    if (!nameMatch) {
-                        // Try to extract from link text
-                        nameMatch = body.match(/>([^<]+)<\/a>/);
-                    }
-                    
-                    if (!idMatch) {
-                        idMatch = body.match(/map[\/=]([a-zA-Z0-9_]+)/);
-                    }
-
-                    if (nameMatch && idMatch) {
-                        let mapName = nameMatch[1]
-                            .replace(/&#(\d+);/g, (match, code) => String.fromCharCode(parseInt(code, 10)))
-                            .replace(/&quot;/g, '"')
-                            .replace(/&amp;/g, '&')
-                            .replace(/&lt;/g, '<')
-                            .replace(/&gt;/g, '>')
-                            .replace(/(\^[0-9|a-z]{6,7})/gi, '') // Remove color codes
-                            .trim();
-                        
-                        // Skip if name is empty or invalid
-                        if (!mapName || mapName.length === 0) {
-                            continue;
-                        }
-                        
-                        // Skip Korean characters (Hangul unicode range: \uAC00-\uD7AF)
-                        if (/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(mapName)) {
-                            logger.debug('Skipping Korean map name', { mapName });
-                            continue;
-                        }
-                        
-                        // Skip names with encoding issues (common patterns)
-                        if (/[\u0000-\u001F\uFFFD]/.test(mapName) || // Control chars or replacement char
-                            mapName.includes('�') || // Replacement character
-                            mapName.includes('&#x') || // Unprocessed HTML entities
-                            /[^\x00-\x7F\u00A0-\u024F\u0400-\u04FF\u2000-\u206F\u3000-\u303F\uFF00-\uFFEF]/.test(mapName)) {
-                            logger.debug('Skipping map with encoding issues', { mapName });
-                            continue;
-                        }
-                        
-                        // Skip placeholder names
-                        if (mapName.toLowerCase().includes('[ph]') ||
-                            mapName.toLowerCase().includes('placeholder') ||
-                            mapName.toLowerCase().includes('unknown') ||
-                            mapName === 'N/A' ||
-                            mapName === '?') {
-                            continue;
-                        }
-                        
-                        // Filter out "We don't have this yet" and similar placeholders
-                        const invalidPatterns = [
-                            /we don't have this yet/i,
-                            /sem dados ainda/i,
-                            /no data yet/i,
-                            /sin datos todavía/i,
-                            /^\s*:\(/,  // Just emoticons
-                            /^\s*\?\s*$/  // Just question marks
-                        ];
-                        
-                        const isInvalid = invalidPatterns.some(pattern => pattern.test(mapName));
-                        if (isInvalid) {
-                            logger.debug('Skipping invalid/placeholder map name', { mapName });
-                            continue;
-                        }
-
-                        const mapId = idMatch[1];
-                        const mapURL = `https://www.divine-pride.net/database/map/${mapId}`;
-                        
-                        // Check if name is descriptive (different from ID)
-                        const isDescriptive = mapName.toLowerCase() !== mapId.toLowerCase();
-
-                        // Store map, prioritizing descriptive names
-                        if (!tempMaps[mapId] || (isDescriptive && !tempMaps[mapId].isDescriptive)) {
-                            tempMaps[mapId] = {
-                                name: mapName,
-                                id: mapId,
-                                url: mapURL,
-                                isDescriptive: isDescriptive
-                            };
-                        }
-                    } else {
-                        logger.debug('Could not extract map data from HTML fragment', {
-                            index: i,
-                            hasNameMatch: !!nameMatch,
-                            hasIdMatch: !!idMatch,
-                            bodyPreview: body.substring(0, 200)
-                        });
-                    }
-                } catch (parseError) {
-                    logger.warn('Error parsing individual map', { 
-                        index: i, 
-                        error: parseError.message 
-                    });
                 }
             }
             
@@ -976,7 +692,7 @@ function parseMapSearchBodyResponse(searchedWord, response, language = 'pt-br') 
             
             logger.debug('Parsed maps from response', {
                 searchedWord,
-                totalFragments: cleanedResponse.length,
+                totalMaps: maps.length,
                 mapsFound: mapsFound
             });
 
@@ -1012,10 +728,10 @@ function parseMapSearchBodyResponse(searchedWord, response, language = 'pt-br') 
  * Parses monster data from API response
  * @param {Object} response - API response object
  * @param {string} monsterId - Monster ID for URL generation
- * @param {string} language - Language code for translations (default: 'pt-br')
+ * @param {string} language - Language code for translations (default: 'pt')
  * @returns {Promise<string>} Formatted monster information
  */
-function parseMonsterResponse(response, monsterId, language = 'pt-br') {
+function parseMonsterResponse(response, monsterId, language = 'pt') {
     return new Promise((resolve, reject) => {
         if (!response) {
             return reject(new ValidationError('Resposta vazia', 'Monstro não encontrado.'));
@@ -1198,10 +914,10 @@ function parseMonsterResponse(response, monsterId, language = 'pt-br') {
  * Parses map data from API response
  * @param {Object} response - API response object
  * @param {string} mapId - Map ID for URL generation
- * @param {string} language - Language code for translations (default: 'pt-br')
+ * @param {string} language - Language code for translations (default: 'pt')
  * @returns {Promise<string>} Formatted map information
  */
-function parseMapResponse(response, mapId, language = 'pt-br') {
+function parseMapResponse(response, mapId, language = 'pt') {
     return new Promise((resolve, reject) => {
         if (!response) {
             return reject(new ValidationError('Resposta vazia', 'Mapa não encontrado.'));

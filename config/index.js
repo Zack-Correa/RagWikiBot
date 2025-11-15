@@ -41,10 +41,10 @@ module.exports = {
     // Divine Pride sempre usa servidor LATAM
     // Apenas a linguagem pode ser selecionada
     languages: {
-        'pt-br': { lang: 'lang=pt', acceptLanguage: 'pt', displayName: 'Português (Brasil)' },
-        'en': { lang: undefined, acceptLanguage: 'en', displayName: 'English' },
-        'es': { lang: 'lang=es', acceptLanguage: 'es', displayName: 'Español' }
+        'pt': { lang: 'lang=pt', acceptLanguage: 'pt-BR', displayName: 'Português' },
+        'en': { lang: undefined, acceptLanguage: 'en-US', displayName: 'English' },
+        'es': { lang: 'lang=es', acceptLanguage: 'es-ES', displayName: 'Español' }
     },
-    defaultLanguage: 'pt-br'
+    defaultLanguage: 'pt'
 };
 

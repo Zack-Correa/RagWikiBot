@@ -47,7 +47,6 @@ const handleReady = () => {
 
 // Support both new (clientReady) and legacy (ready) events
 client.once('clientReady', handleReady);
-//client.once('ready', handleReady);
 
 /**
  * Handles interaction events (slash commands)

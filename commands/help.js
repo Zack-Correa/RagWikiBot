@@ -17,38 +17,28 @@ module.exports = {
             .setDescription('Lista de comandos do RagWiki Bot')
             .addFields(
                 {
-                    name: '/buscar-item-id',
-                    value: 'Busca um item pelo ID no banco de dados Divine Pride\n`/buscar-item-id id:501 servidor:iro`',
+                    name: '🔍 Busca no Divine Pride',
+                    value: 'Os comandos abaixo detectam automaticamente se você está buscando por **nome** ou **ID**:',
                     inline: false
                 },
                 {
                     name: '/buscar-item',
-                    value: 'Busca itens pelo nome no banco de dados Divine Pride\n`/buscar-item nome:Poring servidor:iro`',
-                    inline: false
-                },
-                {
-                    name: '/wiki',
-                    value: 'Busca informações na Browiki\n`/wiki termo:Poring`',
+                    value: 'Busca itens por nome ou ID\n**Exemplos:**\n• `/buscar-item busca:Poring` - busca por nome\n• `/buscar-item busca:501` - busca por ID',
                     inline: false
                 },
                 {
                     name: '/buscar-monstro',
-                    value: 'Busca informações de um monstro pelo ID\n`/buscar-monstro id:1002`',
-                    inline: false
-                },
-                {
-                    name: '/buscar-monstro-nome',
-                    value: 'Busca monstros pelo nome no banco de dados Divine Pride\n`/buscar-monstro-nome nome:Poring servidor:iro`',
+                    value: 'Busca monstros por nome ou ID\n**Exemplos:**\n• `/buscar-monstro busca:Poring` - busca por nome\n• `/buscar-monstro busca:1002` - busca por ID',
                     inline: false
                 },
                 {
                     name: '/buscar-mapa',
-                    value: 'Busca informações de um mapa pelo ID\n`/buscar-mapa id:hu_fild03`',
+                    value: 'Busca mapas por nome ou ID\n**Exemplos:**\n• `/buscar-mapa busca:Prontera` - busca por nome\n• `/buscar-mapa busca:prt_fild01` - busca por ID',
                     inline: false
                 },
                 {
-                    name: '/buscar-mapa-nome',
-                    value: 'Busca mapas pelo nome no banco de dados Divine Pride\n`/buscar-mapa-nome nome:Prontera servidor:iro`',
+                    name: '📚 Busca na Wiki',
+                    value: '`/wiki termo:Poring` - Busca informações na Browiki',
                     inline: false
                 },
                 {

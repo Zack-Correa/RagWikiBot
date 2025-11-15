@@ -4,9 +4,9 @@
  */
 
 const translations = {
-    'pt-br': {
+    'pt': {
         // Common
-        language: 'Português (Brasil)',
+        language: 'Português',
         loading: 'Carregando...',
         error: 'Erro',
         notFound: 'Não encontrado',
@@ -15,25 +15,11 @@ const translations = {
         commands: {
             item: {
                 name: 'buscar-item',
-                description: 'Busca itens pelo nome no banco de dados Divine Pride (servidor LATAM)',
+                description: 'Busca itens por nome ou ID no banco de dados Divine Pride (servidor LATAM)',
                 options: {
-                    name: {
-                        name: 'nome',
-                        description: 'Nome do item'
-                    },
-                    language: {
-                        name: 'idioma',
-                        description: 'Idioma da busca (padrão: Português)'
-                    }
-                }
-            },
-            itemId: {
-                name: 'buscar-item-id',
-                description: 'Busca um item pelo ID no banco de dados Divine Pride (servidor LATAM)',
-                options: {
-                    id: {
-                        name: 'id',
-                        description: 'ID do item'
+                    search: {
+                        name: 'busca',
+                        description: 'Nome ou ID do item'
                     },
                     language: {
                         name: 'idioma',
@@ -42,12 +28,12 @@ const translations = {
                 }
             },
             monster: {
-                name: 'buscar-monstro-nome',
-                description: 'Busca monstros pelo nome no banco de dados Divine Pride (servidor LATAM)',
+                name: 'buscar-monstro',
+                description: 'Busca monstros por nome ou ID no banco de dados Divine Pride (servidor LATAM)',
                 options: {
-                    name: {
-                        name: 'nome',
-                        description: 'Nome do monstro'
+                    search: {
+                        name: 'busca',
+                        description: 'Nome ou ID do monstro'
                     },
                     language: {
                         name: 'idioma',
@@ -56,12 +42,12 @@ const translations = {
                 }
             },
             map: {
-                name: 'buscar-mapa-nome',
-                description: 'Busca mapas pelo nome no banco de dados Divine Pride (servidor LATAM)',
+                name: 'buscar-mapa',
+                description: 'Busca mapas por nome ou ID no banco de dados Divine Pride (servidor LATAM)',
                 options: {
-                    name: {
-                        name: 'nome',
-                        description: 'Nome do mapa'
+                    search: {
+                        name: 'busca',
+                        description: 'Nome ou ID do mapa'
                     },
                     language: {
                         name: 'idioma',
@@ -208,25 +194,11 @@ const translations = {
         commands: {
             item: {
                 name: 'search-item',
-                description: 'Search for items by name in Divine Pride database (LATAM server)',
+                description: 'Search for items by name or ID in Divine Pride database (LATAM server)',
                 options: {
-                    name: {
-                        name: 'name',
-                        description: 'Item name'
-                    },
-                    language: {
-                        name: 'language',
-                        description: 'Search language (default: Portuguese)'
-                    }
-                }
-            },
-            itemId: {
-                name: 'search-item-id',
-                description: 'Search for an item by ID in Divine Pride database (LATAM server)',
-                options: {
-                    id: {
-                        name: 'id',
-                        description: 'Item ID'
+                    search: {
+                        name: 'search',
+                        description: 'Item name or ID'
                     },
                     language: {
                         name: 'language',
@@ -235,12 +207,12 @@ const translations = {
                 }
             },
             monster: {
-                name: 'search-monster-name',
-                description: 'Search for monsters by name in Divine Pride database (LATAM server)',
+                name: 'search-monster',
+                description: 'Search for monsters by name or ID in Divine Pride database (LATAM server)',
                 options: {
-                    name: {
-                        name: 'name',
-                        description: 'Monster name'
+                    search: {
+                        name: 'search',
+                        description: 'Monster name or ID'
                     },
                     language: {
                         name: 'language',
@@ -249,12 +221,12 @@ const translations = {
                 }
             },
             map: {
-                name: 'search-map-name',
-                description: 'Search for maps by name in Divine Pride database (LATAM server)',
+                name: 'search-map',
+                description: 'Search for maps by name or ID in Divine Pride database (LATAM server)',
                 options: {
-                    name: {
-                        name: 'name',
-                        description: 'Map name'
+                    search: {
+                        name: 'search',
+                        description: 'Map name or ID'
                     },
                     language: {
                         name: 'language',
@@ -401,25 +373,11 @@ const translations = {
         commands: {
             item: {
                 name: 'buscar-item',
-                description: 'Busca ítems por nombre en la base de datos Divine Pride (servidor LATAM)',
+                description: 'Busca ítems por nombre o ID en la base de datos Divine Pride (servidor LATAM)',
                 options: {
-                    name: {
-                        name: 'nombre',
-                        description: 'Nombre del ítem'
-                    },
-                    language: {
-                        name: 'idioma',
-                        description: 'Idioma de búsqueda (predeterminado: Portugués)'
-                    }
-                }
-            },
-            itemId: {
-                name: 'buscar-item-id',
-                description: 'Busca un ítem por ID en la base de datos Divine Pride (servidor LATAM)',
-                options: {
-                    id: {
-                        name: 'id',
-                        description: 'ID del ítem'
+                    search: {
+                        name: 'busca',
+                        description: 'Nombre o ID del ítem'
                     },
                     language: {
                         name: 'idioma',
@@ -428,12 +386,12 @@ const translations = {
                 }
             },
             monster: {
-                name: 'buscar-monstruo-nombre',
-                description: 'Busca monstruos por nombre en la base de datos Divine Pride (servidor LATAM)',
+                name: 'buscar-monstruo',
+                description: 'Busca monstruos por nombre o ID en la base de datos Divine Pride (servidor LATAM)',
                 options: {
-                    name: {
-                        name: 'nombre',
-                        description: 'Nombre del monstruo'
+                    search: {
+                        name: 'busca',
+                        description: 'Nombre o ID del monstruo'
                     },
                     language: {
                         name: 'idioma',
@@ -442,12 +400,12 @@ const translations = {
                 }
             },
             map: {
-                name: 'buscar-mapa-nombre',
-                description: 'Busca mapas por nombre en la base de datos Divine Pride (servidor LATAM)',
+                name: 'buscar-mapa',
+                description: 'Busca mapas por nombre o ID en la base de datos Divine Pride (servidor LATAM)',
                 options: {
-                    name: {
-                        name: 'nombre',
-                        description: 'Nombre del mapa'
+                    search: {
+                        name: 'busca',
+                        description: 'Nombre o ID del mapa'
                     },
                     language: {
                         name: 'idioma',
@@ -586,12 +544,12 @@ const translations = {
 
 /**
  * Get translation for a specific language
- * @param {string} language - Language code (pt-br, en, es)
+ * @param {string} language - Language code (pt, en, es)
  * @param {string} key - Translation key (dot notation supported)
  * @returns {string|object} Translation or key if not found
  */
 function t(language, key) {
-    const lang = translations[language] || translations['pt-br'];
+    const lang = translations[language] || translations['pt'];
     
     // Support dot notation (e.g., 'search.title')
     const keys = key.split('.');
@@ -610,11 +568,11 @@ function t(language, key) {
 
 /**
  * Get all translations for a specific language
- * @param {string} language - Language code (pt-br, en, es)
+ * @param {string} language - Language code (pt, en, es)
  * @returns {object} All translations for the language
  */
 function getLanguage(language) {
-    return translations[language] || translations['pt-br'];
+    return translations[language] || translations['pt'];
 }
 
 /**
