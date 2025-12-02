@@ -1,12 +1,5 @@
 {
     "endpoints": [{
-            "url": "https://bropedia.net/api.php",
-            "params": {
-                "action": "opensearch",
-                "search": ""
-            }
-        },
-        {
             "url": "https://browiki.org/api.php",
             "params": {
                 "action": "opensearch",
@@ -27,14 +20,29 @@
         },
         {
             "url": "https://www.divine-pride.net/Api/Regions/SetServer/"
+        },
+        {
+            "url": "https://www.divine-pride.net/api/database/Monster/",
+            "params": {
+                "server": ""
+            }
+        },
+        {
+            "url": "https://www.divine-pride.net/api/database/Map/",
+            "params": {
+                "server": ""
+            }
+        },
+        {
+            "url": "https://www.divine-pride.net/api/database/Skill/",
+            "params": {
+                "server": ""
+            }
         }
     ],
     "assets": [
         {
-            "url": "https://browiki.org/resources/assets/wiki.png?c2539"
-        },
-        {
-            "url": "https://portal.bropedia.net/user/pages/01.home/dev.png"
+            "url": "https://browiki.org/images2/wiki.png?c2539"
         },
         {
             "url": "https://static.divine-pride.net/images/divinepride.png"
