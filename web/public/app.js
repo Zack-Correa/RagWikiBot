@@ -10,13 +10,19 @@ let currentSection = 'dashboard';
 const sections = document.querySelectorAll('.section');
 const navLinks = document.querySelectorAll('.nav-link[data-section]');
 
+// Charts
+let commandsChart = null;
+let hourlyChart = null;
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initDashboard();
+    initMetrics();
     initAlerts();
     initConfig();
     initWhitelist();
+    initNews();
     initDeploy();
     initLogs();
     
@@ -25,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAlerts();
     loadConfig();
     loadWhitelist();
+    loadNews();
     loadDeployStatus();
     loadLogs();
     
@@ -68,6 +75,10 @@ function initDashboard() {
     document.getElementById('btn-force-check').addEventListener('click', forceCheck);
     document.getElementById('btn-toggle-service').addEventListener('click', toggleService);
     document.getElementById('btn-refresh').addEventListener('click', loadStats);
+    document.getElementById('btn-check-servers').addEventListener('click', forceCheckServers);
+    
+    // Load server status on init
+    loadServerStatus();
 }
 
 async function loadStats() {
@@ -152,10 +163,284 @@ async function toggleService() {
     }
 }
 
+// Server Status
+async function loadServerStatus() {
+    try {
+        const response = await fetch('/api/server-status');
+        const result = await response.json();
+        
+        if (result.success) {
+            renderServerStatus(result.data);
+        }
+    } catch (error) {
+        console.error('Error loading server status:', error);
+    }
+}
+
+function renderServerStatus(data) {
+    const grid = document.getElementById('server-status-grid');
+    const servers = data.servers || {};
+    
+    const serverHtml = Object.entries(servers).map(([name, status]) => {
+        const statusClass = status.online === null ? 'unknown' : (status.online ? 'online' : 'offline');
+        const statusText = status.online === null ? 'Desconhecido' : (status.online ? 'Online' : 'Offline');
+        return `
+            <div class="server-status-item">
+                <span class="status-dot ${statusClass}"></span>
+                <span class="server-name">${escapeHtml(name)}</span>
+            </div>
+        `;
+    }).join('');
+    
+    grid.innerHTML = serverHtml || '<div class="loading">Nenhum servidor</div>';
+    
+    // Update info
+    if (data.lastUpdated) {
+        const lastCheck = new Date(data.lastUpdated);
+        document.getElementById('server-last-check').textContent = formatDate(lastCheck);
+    } else {
+        document.getElementById('server-last-check').textContent = 'Nunca';
+    }
+    
+    document.getElementById('server-account-address').textContent = data.accountServer || '-';
+}
+
+async function forceCheckServers() {
+    const btn = document.getElementById('btn-check-servers');
+    btn.disabled = true;
+    btn.textContent = 'Verificando...';
+    
+    try {
+        const response = await fetch('/api/server-status/check', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Verificação concluída!', 'success');
+            loadServerStatus();
+        } else {
+            showToast(result.error || 'Erro ao verificar', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking servers:', error);
+        showToast('Erro ao verificar servidores', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verificar Agora';
+    }
+}
+
+// Metrics
+function initMetrics() {
+    document.getElementById('btn-refresh-metrics').addEventListener('click', loadMetrics);
+    document.getElementById('btn-reset-metrics').addEventListener('click', resetMetrics);
+    
+    // Load metrics when section becomes visible
+    navLinks.forEach(link => {
+        link.addEventListener('click', () => {
+            if (link.dataset.section === 'metrics') {
+                loadMetrics();
+            }
+        });
+    });
+}
+
+async function loadMetrics() {
+    try {
+        // Load dashboard stats
+        const dashboardRes = await fetch('/api/metrics/dashboard');
+        const dashboardResult = await dashboardRes.json();
+        
+        if (dashboardResult.success) {
+            const data = dashboardResult.data;
+            
+            document.getElementById('metrics-today-commands').textContent = data.today?.totalCommands || 0;
+            document.getElementById('metrics-today-users').textContent = data.today?.uniqueUsers || 0;
+            document.getElementById('metrics-total-commands').textContent = data.totals?.commands || 0;
+            document.getElementById('metrics-total-users').textContent = data.totals?.uniqueUsers || 0;
+            
+            // Render top commands
+            renderTopCommands(data.today?.topCommands || []);
+        }
+        
+        // Load chart data
+        const chartRes = await fetch('/api/metrics/chart?days=7');
+        const chartResult = await chartRes.json();
+        
+        if (chartResult.success) {
+            renderCommandsChart(chartResult.data);
+        }
+        
+        // Load hourly data
+        const hourlyRes = await fetch('/api/metrics/hourly');
+        const hourlyResult = await hourlyRes.json();
+        
+        if (hourlyResult.success) {
+            renderHourlyChart(hourlyResult.data);
+        }
+    } catch (error) {
+        console.error('Error loading metrics:', error);
+        showToast('Erro ao carregar métricas', 'error');
+    }
+}
+
+function renderTopCommands(commands) {
+    const container = document.getElementById('top-commands-grid');
+    
+    if (commands.length === 0) {
+        container.innerHTML = '<div class="metrics-empty">Nenhum comando executado ainda hoje</div>';
+        return;
+    }
+    
+    container.innerHTML = commands.map((cmd, index) => {
+        const rankClass = index < 3 ? `top-${index + 1}` : '';
+        const errorRate = cmd.count > 0 ? ((cmd.errors / cmd.count) * 100).toFixed(1) : 0;
+        
+        return `
+            <div class="command-stat-card">
+                <div class="rank ${rankClass}">${index + 1}</div>
+                <div class="cmd-info">
+                    <div class="cmd-name">/${escapeHtml(cmd.name)}</div>
+                    <div class="cmd-stats">
+                        <span>Média: ${cmd.avgResponseMs || 0}ms</span>
+                        ${cmd.errors > 0 ? `<span class="errors">${cmd.errors} erro(s) (${errorRate}%)</span>` : ''}
+                    </div>
+                </div>
+                <div class="cmd-count">${cmd.count}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCommandsChart(data) {
+    const ctx = document.getElementById('chart-commands-daily');
+    if (!ctx) return;
+    
+    // Destroy existing chart
+    if (commandsChart) {
+        commandsChart.destroy();
+    }
+    
+    commandsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.labels,
+            datasets: [
+                {
+                    label: 'Comandos',
+                    data: data.datasets.commands,
+                    borderColor: '#F5A623',
+                    backgroundColor: 'rgba(245, 166, 35, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                },
+                {
+                    label: 'Usuários',
+                    data: data.datasets.users,
+                    borderColor: '#3BA55C',
+                    backgroundColor: 'rgba(59, 165, 92, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: '#FFF8E7'
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#D4C5A9' },
+                    grid: { color: '#4A4639' }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#D4C5A9' },
+                    grid: { color: '#4A4639' }
+                }
+            }
+        }
+    });
+}
+
+function renderHourlyChart(data) {
+    const ctx = document.getElementById('chart-commands-hourly');
+    if (!ctx) return;
+    
+    // Destroy existing chart
+    if (hourlyChart) {
+        hourlyChart.destroy();
+    }
+    
+    hourlyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                label: 'Comandos',
+                data: data.counts,
+                backgroundColor: '#F5A623',
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { 
+                        color: '#D4C5A9',
+                        maxRotation: 45,
+                        minRotation: 45
+                    },
+                    grid: { display: false }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#D4C5A9' },
+                    grid: { color: '#4A4639' }
+                }
+            }
+        }
+    });
+}
+
+async function resetMetrics() {
+    if (!confirm('Tem certeza que deseja resetar todas as métricas? Esta ação não pode ser desfeita.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/metrics/reset', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Métricas resetadas!', 'success');
+            loadMetrics();
+        } else {
+            showToast(result.error || 'Erro ao resetar métricas', 'error');
+        }
+    } catch (error) {
+        console.error('Error resetting metrics:', error);
+        showToast('Erro ao resetar métricas', 'error');
+    }
+}
+
 // Alerts
 function initAlerts() {
     document.getElementById('btn-filter-alerts').addEventListener('click', loadAlerts);
     document.getElementById('btn-refresh-alerts').addEventListener('click', refreshAlerts);
+    document.getElementById('create-alert-form').addEventListener('submit', createAlert);
 }
 
 async function refreshAlerts() {
@@ -168,6 +453,53 @@ async function refreshAlerts() {
     btn.disabled = false;
     btn.textContent = '🔄 Atualizar';
     showToast('Lista de alertas atualizada!', 'success');
+}
+
+async function createAlert(e) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Criando...';
+    
+    const userId = document.getElementById('alert-user-id').value.trim();
+    const searchTerm = document.getElementById('alert-search-term').value.trim();
+    const server = document.getElementById('alert-server').value;
+    const storeType = document.getElementById('alert-type').value;
+    const maxPrice = document.getElementById('alert-max-price').value;
+    const minQuantity = document.getElementById('alert-min-quantity').value;
+    
+    try {
+        const response = await fetch('/api/alerts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId,
+                searchTerm,
+                server,
+                storeType,
+                maxPrice: maxPrice || null,
+                minQuantity: minQuantity || null
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Alerta criado com sucesso!', 'success');
+            form.reset();
+            loadAlerts();
+        } else {
+            showToast(result.error || 'Erro ao criar alerta', 'error');
+        }
+    } catch (error) {
+        console.error('Error creating alert:', error);
+        showToast('Erro ao criar alerta', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Criar Alerta';
+    }
 }
 
 async function loadAlerts() {
@@ -633,10 +965,160 @@ async function removeFromWhitelist(userId) {
     await removePermission(userId);
 }
 
+// News Section
+function initNews() {
+    document.getElementById('btn-refresh-news').addEventListener('click', forceRefreshNews);
+    document.getElementById('btn-reload-news').addEventListener('click', loadNews);
+}
+
+async function loadNews() {
+    try {
+        const response = await fetch('/api/news');
+        const result = await response.json();
+        
+        if (result.success) {
+            const data = result.data;
+            
+            // Update cache info
+            document.getElementById('news-count').textContent = data.cache.newsCount || 0;
+            
+            if (data.cache.lastRefresh) {
+                const lastRefresh = new Date(data.cache.lastRefresh);
+                document.getElementById('news-last-refresh').textContent = formatDate(lastRefresh);
+            } else {
+                document.getElementById('news-last-refresh').textContent = 'Nunca';
+            }
+            
+            document.getElementById('news-refresh-days').textContent = 
+                data.cache.refreshDays ? data.cache.refreshDays.join(', ') : '-';
+            
+            document.getElementById('news-should-refresh').textContent = 
+                data.cache.shouldRefresh ? 'Pendente' : 'Atualizado';
+            
+            // Update category counts
+            document.getElementById('news-cat-avisos').textContent = data.categories.avisos || 0;
+            document.getElementById('news-cat-atualizacoes').textContent = data.categories.atualizacoes || 0;
+            document.getElementById('news-cat-eventos').textContent = data.categories.eventos || 0;
+            document.getElementById('news-cat-outros').textContent = data.categories.outros || 0;
+            
+            // Render news list
+            renderNewsList(data.news, data.categorizedNews);
+        } else {
+            showToast(result.error || 'Erro ao carregar notícias', 'error');
+        }
+    } catch (error) {
+        console.error('Error loading news:', error);
+        showToast('Erro ao carregar notícias', 'error');
+    }
+}
+
+function renderNewsList(news, categorizedNews) {
+    const container = document.getElementById('news-list');
+    
+    if (!news || news.length === 0) {
+        container.innerHTML = '<div class="news-empty">Nenhuma notícia em cache. Clique em "Forçar Atualização" para buscar.</div>';
+        return;
+    }
+    
+    // Determine category for each news item
+    const newsWithCategory = news.map(item => {
+        let category = 'outro';
+        if (categorizedNews.avisos.some(n => n.id === item.id)) category = 'aviso';
+        else if (categorizedNews.atualizacoes.some(n => n.id === item.id)) category = 'atualizacao';
+        else if (categorizedNews.eventos.some(n => n.id === item.id)) category = 'evento';
+        return { ...item, displayCategory: category };
+    });
+    
+    const categoryLabels = {
+        'aviso': 'Aviso',
+        'atualizacao': 'Atualização',
+        'evento': 'Evento',
+        'outro': 'Outro'
+    };
+    
+    container.innerHTML = newsWithCategory.map(item => `
+        <div class="news-item">
+            <div class="news-item-content">
+                <div class="news-item-title">
+                    <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
+                        ${escapeHtml(item.title || 'Sem título')}
+                    </a>
+                </div>
+                <div class="news-item-meta">
+                    <span class="news-item-category ${item.displayCategory}">${categoryLabels[item.displayCategory]}</span>
+                    ${item.date ? `<span>📅 ${escapeHtml(item.date)}</span>` : ''}
+                    <span>ID: ${escapeHtml(item.id)}</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function forceRefreshNews() {
+    const btn = document.getElementById('btn-refresh-news');
+    btn.disabled = true;
+    btn.textContent = 'Atualizando...';
+    
+    try {
+        const response = await fetch('/api/news/refresh', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`Notícias atualizadas! ${result.data.newsCount} notícias carregadas.`, 'success');
+            loadNews();
+        } else {
+            showToast(result.error || 'Erro ao atualizar notícias', 'error');
+        }
+    } catch (error) {
+        console.error('Error refreshing news:', error);
+        showToast('Erro ao atualizar notícias', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Forçar Atualização';
+    }
+}
+
 // Deploy
+let availableCommandsList = [];
+
 function initDeploy() {
     document.getElementById('btn-deploy-global').addEventListener('click', deployGlobal);
     document.getElementById('btn-clear-global').addEventListener('click', clearGlobalCommands);
+    document.getElementById('btn-select-all-commands').addEventListener('click', selectAllCommands);
+    document.getElementById('btn-deselect-all-commands').addEventListener('click', deselectAllCommands);
+}
+
+function selectAllCommands() {
+    const checkboxes = document.querySelectorAll('#available-commands input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = true;
+        cb.closest('.command-checkbox').classList.add('selected');
+    });
+    updateSelectedCount();
+}
+
+function deselectAllCommands() {
+    const checkboxes = document.querySelectorAll('#available-commands input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = false;
+        cb.closest('.command-checkbox').classList.remove('selected');
+    });
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('#available-commands input[type="checkbox"]:checked');
+    const countEl = document.getElementById('selected-commands-count');
+    const count = checkboxes.length;
+    countEl.textContent = count === 0 ? 'Nenhum selecionado (todos serão deployados)' : `${count} selecionado(s)`;
+}
+
+function getSelectedCommands() {
+    const checkboxes = document.querySelectorAll('#available-commands input[type="checkbox"]:checked');
+    if (checkboxes.length === 0) {
+        return null; // null = deploy all
+    }
+    return Array.from(checkboxes).map(cb => cb.value);
 }
 
 async function loadDeployStatus() {
@@ -645,6 +1127,7 @@ async function loadDeployStatus() {
         const result = await response.json();
         
         if (result.success) {
+            availableCommandsList = result.data.availableCommands || [];
             renderDeployStatus(result.data);
         }
     } catch (error) {
@@ -669,15 +1152,17 @@ function renderDeployStatus(data) {
         return;
     }
     
-    // Render available commands
+    // Render available commands with checkboxes
     const commandsContainer = document.getElementById('available-commands');
     if (data.availableCommands && data.availableCommands.length > 0) {
         commandsContainer.innerHTML = data.availableCommands.map(cmd => `
-            <div class="command-badge">
+            <label class="command-checkbox" for="cmd-${cmd.name}">
+                <input type="checkbox" id="cmd-${cmd.name}" value="${cmd.name}" onchange="toggleCommandSelection(this)">
                 <span class="cmd-name">/${cmd.name}</span>
                 <span class="cmd-desc">${escapeHtml(cmd.description)}</span>
-            </div>
+            </label>
         `).join('');
+        updateSelectedCount();
     } else {
         commandsContainer.innerHTML = '<div class="loading">Nenhum comando encontrado</div>';
     }
@@ -741,8 +1226,22 @@ function renderDeployStatus(data) {
     }
 }
 
+function toggleCommandSelection(checkbox) {
+    const label = checkbox.closest('.command-checkbox');
+    if (checkbox.checked) {
+        label.classList.add('selected');
+    } else {
+        label.classList.remove('selected');
+    }
+    updateSelectedCount();
+}
+
 async function deployGlobal() {
-    if (!confirm('Tem certeza que deseja fazer o deploy global? Pode levar até 1 hora para propagar.')) {
+    const selectedCommands = getSelectedCommands();
+    const commandCount = selectedCommands ? selectedCommands.length : availableCommandsList.length;
+    const commandText = selectedCommands ? `${commandCount} comando(s) selecionado(s)` : 'todos os comandos';
+    
+    if (!confirm(`Tem certeza que deseja fazer o deploy global de ${commandText}? Pode levar até 1 hora para propagar.`)) {
         return;
     }
     
@@ -754,7 +1253,7 @@ async function deployGlobal() {
         const response = await fetch('/api/deploy/global', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ commands: selectedCommands })
         });
         
         const result = await response.json();
@@ -796,11 +1295,13 @@ async function clearGlobalCommands() {
 }
 
 async function deployToGuild(guildId) {
+    const selectedCommands = getSelectedCommands();
+    
     try {
         const response = await fetch(`/api/deploy/guild/${guildId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ commands: selectedCommands })
         });
         
         const result = await response.json();
@@ -887,3 +1388,4 @@ window.removePermission = removePermission;
 window.selectRole = selectRole;
 window.deployToGuild = deployToGuild;
 window.clearGuildCommands = clearGuildCommands;
+window.toggleCommandSelection = toggleCommandSelection;

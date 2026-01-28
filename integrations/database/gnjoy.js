@@ -6,11 +6,20 @@
 const axios = require('axios');
 const logger = require('../../utils/logger');
 const { APIError } = require('../../utils/errors');
+const priceHistoryStorage = require('../../utils/priceHistoryStorage');
 
 // API endpoints
 const ENDPOINTS = {
     MARKET_SEARCH: 'https://ro.gnjoylatam.com/pt/intro/shop-search/trading',
+    MARKET_PRICE: 'https://ro.gnjoylatam.com/pt/intro/shop-search/market-price',
     BASE_PAGE: 'https://ro.gnjoylatam.com/pt/intro/shop-search/trading'
+};
+
+// Server IDs mapping
+const SERVER_IDS = {
+    FREYA: 3,
+    NIDHOGG: 4,
+    YGGDRASIL: 5
 };
 
 // Available servers
@@ -288,6 +297,15 @@ async function searchMarket(searchWord, options = {}) {
                     listLength: data.list?.length || 0
                 });
 
+                // Record price history
+                if (data.list.length > 0) {
+                    try {
+                        priceHistoryStorage.recordMarketResults(data.list, server, storeType);
+                    } catch (historyError) {
+                        logger.warn('Failed to record price history', { error: historyError.message });
+                    }
+                }
+
                 return {
                     list: data.list || [],
                     totalCount: data.totalCount || 0,
@@ -363,11 +381,158 @@ function getStoreTypeLabel(storeType) {
     return storeType === STORE_TYPES.BUY ? 'Comprando' : 'Vendendo';
 }
 
+/**
+ * Fetches price history for an item from GNJoy API
+ * @param {number} itemId - Item ID
+ * @param {string} server - Server name (FREYA, NIDHOGG, YGGDRASIL)
+ * @param {string} period - Period (ALL, WEEK, MONTH)
+ * @param {string} searchWord - Search term used to find the item
+ * @returns {Promise<Object>} Price history data
+ */
+async function getPriceHistory(itemId, server = 'FREYA', period = 'ALL', searchWord = '') {
+    const svrId = SERVER_IDS[server] || 3;
+    
+    logger.info('Fetching price history from GNJoy', { itemId, server, svrId, period, searchWord });
+    
+    const url = `${ENDPOINTS.MARKET_PRICE}?serverType=${server}&period=${period}&searchWord=${encodeURIComponent(searchWord)}`;
+    
+    // POST body as JSON array (original format from user)
+    const payload = [{
+        type: 'price',
+        params: {
+            itemId: parseInt(itemId, 10),
+            svrId: svrId,
+            page: 1,
+            limit: 100,
+            period: '$undefined'
+        }
+    }];
+    
+    try {
+        const response = await axios.post(url, JSON.stringify(payload), {
+            headers: {
+                'Content-Type': 'text/plain;charset=UTF-8',
+                'Accept': 'text/x-component',
+                'Next-Action': '4001690b22958ed4f4bf2bb55797244baa7ebb95e5',
+                'Next-Router-State-Tree': '%5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22pt%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22(primary)%22%2C%7B%22children%22%3A%5B%22intro%22%2C%7B%22children%22%3A%5B%22shop-search%22%2C%7B%22children%22%3A%5B%5B%22id%22%2C%22market-price%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D%7D%5D%7D%5D%7D%2Cnull%2Cnull%2Ctrue%5D',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+                'Origin': 'https://ro.gnjoylatam.com',
+                'Referer': url
+            },
+            timeout: 15000
+        });
+        
+        // Parse RSC response
+        // Format: 0:{"a":"$@1",...}\n1:{"data":{...},"success":true}
+        const text = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        
+        logger.debug('Price history response', { 
+            length: text.length,
+            sample: text.substring(0, 200)
+        });
+        
+        // Split by newline and find line starting with "1:"
+        const lines = text.split('\n');
+        
+        for (const line of lines) {
+            // Look for the data line (usually "1:{...}")
+            if (line.startsWith('1:') && line.includes('"data"') && line.includes('"success"')) {
+                try {
+                    const jsonPart = line.substring(2); // Remove "1:"
+                    const parsed = JSON.parse(jsonPart);
+                    
+                    if (parsed && parsed.data && parsed.success) {
+                        logger.info('Price history fetched successfully', { 
+                            itemId,
+                            server,
+                            dataPoints: parsed.data.priceDetailChartList?.length || 0,
+                            minPrice: parsed.data.itemPriceMin,
+                            maxPrice: parsed.data.itemPriceMax
+                        });
+                        return parsed.data;
+                    }
+                } catch (e) {
+                    logger.debug('Failed to parse line 1', { error: e.message });
+                }
+            }
+        }
+        
+        // Fallback: try to find JSON anywhere in text
+        const jsonMatch = text.match(/\{"data":\{[^}]*"itemPriceMin"[\s\S]*?"success":true\}/);
+        if (jsonMatch) {
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.data) {
+                    logger.info('Price history fetched (fallback)', { 
+                        itemId,
+                        dataPoints: parsed.data.priceDetailChartList?.length || 0
+                    });
+                    return parsed.data;
+                }
+            } catch (e) {
+                logger.debug('Fallback parse failed', { error: e.message });
+            }
+        }
+        
+        logger.warn('Could not parse price history response', { 
+            itemId, 
+            server, 
+            responseLength: text.length,
+            hasData: text.includes('"data"'),
+            hasSuccess: text.includes('"success"')
+        });
+        return null;
+        
+    } catch (error) {
+        logger.error('Error fetching price history', { 
+            itemId, 
+            server, 
+            error: error.message 
+        });
+        return null;
+    }
+}
+
+/**
+ * Searches market and gets price history for an item
+ * Returns both current listings and historical data
+ * @param {string} searchTerm - Item name to search
+ * @param {Object} options - Search options
+ * @returns {Promise<Object>} Combined market and history data
+ */
+async function getMarketWithHistory(searchTerm, options = {}) {
+    const { server = 'FREYA', storeType = 'BUY' } = options;
+    
+    // First, search the market to find items
+    const marketResult = await searchMarket(searchTerm, { server, storeType });
+    
+    if (!marketResult || !marketResult.list || marketResult.list.length === 0) {
+        return { market: null, history: null };
+    }
+    
+    // Get the first matching item's ID
+    const firstItem = marketResult.list[0];
+    const itemId = firstItem.itemId;
+    
+    // Fetch price history for this item
+    const history = await getPriceHistory(itemId, server, 'ALL');
+    
+    return {
+        market: marketResult,
+        history: history,
+        itemId: itemId,
+        itemName: firstItem.itemName
+    };
+}
+
 module.exports = {
     searchMarket,
+    getPriceHistory,
+    getMarketWithHistory,
     formatPrice,
     getStoreTypeLabel,
     SERVERS,
     STORE_TYPES,
+    SERVER_IDS,
     ENDPOINTS
 };
