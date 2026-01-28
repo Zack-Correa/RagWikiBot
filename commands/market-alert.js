@@ -1,12 +1,13 @@
 /**
  * Slash Command: /alerta-mercado
- * Manages market alerts for users (admin only)
+ * Manages market alerts for users (whitelisted users or admins)
  * Allows adding, removing, and listing alerts
  */
 
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const alertStorage = require('../utils/alertStorage');
 const marketAlertService = require('../services/marketAlertService');
+const configStorage = require('../utils/configStorage');
 const gnjoy = require('../integrations/database/gnjoy');
 const logger = require('../utils/logger');
 const { COLORS } = require('../utils/constants');
@@ -14,8 +15,7 @@ const { COLORS } = require('../utils/constants');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('alerta-mercado')
-        .setDescription('Gerencia alertas de mercado (apenas admins)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDescription('Gerencia alertas de mercado')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('adicionar')
@@ -95,10 +95,20 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        // Double-check admin permission
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        // Check if user is allowed (whitelist, username, role, or admin)
+        const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+        const roleIds = interaction.member.roles.cache.map(role => role.id);
+        
+        const isAllowed = configStorage.isUserAllowed({
+            userId: interaction.user.id,
+            username: interaction.user.username,
+            roleIds,
+            isAdmin
+        });
+        
+        if (!isAllowed) {
             return interaction.reply({
-                content: '❌ Este comando é apenas para administradores.',
+                content: '❌ Você não tem permissão para usar este comando. Entre em contato com um administrador para ser adicionado à lista de permissões.',
                 ephemeral: true
             });
         }

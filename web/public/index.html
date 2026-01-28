@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BeeWiki Admin - Dashboard</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="icon" href="/assets/logo.png" type="image/png">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <img src="/assets/logo.png" alt="BeeWiki" class="nav-logo">
+            BeeWiki Admin
+        </div>
+        <div class="nav-links">
+            <a href="#dashboard" class="nav-link active" data-section="dashboard">Dashboard</a>
+            <a href="#alerts" class="nav-link" data-section="alerts">Alertas</a>
+            <a href="#config" class="nav-link" data-section="config">Configurações</a>
+            <a href="#whitelist" class="nav-link" data-section="whitelist">Permissões</a>
+            <a href="#deploy" class="nav-link" data-section="deploy">Deploy</a>
+            <a href="#logs" class="nav-link" data-section="logs">Logs</a>
+            <a href="/logout" class="nav-link logout">Sair</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <!-- Dashboard Section -->
+        <section id="dashboard" class="section active">
+            <h2>Dashboard</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-total-alerts">-</div>
+                    <div class="stat-label">Total de Alertas</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-unique-users">-</div>
+                    <div class="stat-label">Usuários</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-unique-searches">-</div>
+                    <div class="stat-label">Buscas Únicas</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-service-status">-</div>
+                    <div class="stat-label">Status do Serviço</div>
+                </div>
+            </div>
+            
+            <div class="info-card">
+                <h3>Informações do Sistema</h3>
+                <div class="info-row">
+                    <span class="info-label">Última Verificação:</span>
+                    <span class="info-value" id="info-last-check">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Intervalo:</span>
+                    <span class="info-value" id="info-interval">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Cooldown:</span>
+                    <span class="info-value" id="info-cooldown">-</span>
+                </div>
+            </div>
+            
+            <div class="actions-card">
+                <h3>Ações</h3>
+                <div class="actions-buttons">
+                    <button class="btn btn-primary" id="btn-force-check">Forçar Verificação</button>
+                    <button class="btn btn-warning" id="btn-toggle-service">Parar Serviço</button>
+                    <button class="btn btn-secondary" id="btn-refresh">Atualizar</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Alerts Section -->
+        <section id="alerts" class="section">
+            <h2>Gerenciar Alertas</h2>
+            
+            <div class="filters-card">
+                <div class="filters-row">
+                    <div class="filter-group">
+                        <label>Servidor:</label>
+                        <select id="filter-server">
+                            <option value="">Todos</option>
+                            <option value="FREYA">Freya</option>
+                            <option value="NIDHOGG">Nidhogg</option>
+                            <option value="YGGDRASIL">Yggdrasil</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Tipo:</label>
+                        <select id="filter-type">
+                            <option value="">Todos</option>
+                            <option value="BUY">Comprando</option>
+                            <option value="SELL">Vendendo</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-secondary" id="btn-filter-alerts">Filtrar</button>
+                    <button class="btn btn-primary" id="btn-refresh-alerts">🔄 Atualizar</button>
+                </div>
+            </div>
+            
+            <div class="alerts-table-container">
+                <table class="alerts-table">
+                    <thead>
+                        <tr>
+                            <th>Usuário</th>
+                            <th>Item</th>
+                            <th>Tipo</th>
+                            <th>Servidor</th>
+                            <th>Preço Máx</th>
+                            <th>Menor Preço</th>
+                            <th>Notificações</th>
+                            <th>Criado em</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-table-body">
+                        <tr><td colspan="9" class="loading">Carregando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Config Section -->
+        <section id="config" class="section">
+            <h2>Configurações do Sistema</h2>
+            
+            <div class="config-card">
+                <h3>Intervalos e Cooldowns</h3>
+                <form id="config-form">
+                    <div class="form-group">
+                        <label for="config-interval">Intervalo de Verificação (minutos)</label>
+                        <input type="number" id="config-interval" min="1" max="1440" value="15">
+                        <small>Com que frequência o bot verifica por itens no mercado (1-1440 min)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="config-cooldown">Cooldown de Notificação (minutos)</label>
+                        <input type="number" id="config-cooldown" min="1" max="1440" value="60">
+                        <small>Tempo mínimo entre notificações do mesmo alerta (1-1440 min)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="config-delay">Delay entre Requisições (ms)</label>
+                        <input type="number" id="config-delay" min="500" max="10000" value="2000">
+                        <small>Atraso entre cada requisição à API (500-10000 ms)</small>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="config-allow-admins" checked>
+                            Admins sempre permitidos
+                        </label>
+                        <small>Se desabilitado, admins também precisam estar na whitelist</small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Salvar Configurações</button>
+                        <button type="button" class="btn btn-secondary" id="btn-reset-config">Restaurar Padrões</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Permissions Section -->
+        <section id="whitelist" class="section">
+            <h2>Permissões de Alertas</h2>
+            
+            <div class="permissions-add-card">
+                <h3>Adicionar Permissão</h3>
+                <form id="permission-add-form">
+                    <div class="form-row permission-form-row">
+                        <select id="permission-type" class="permission-type-select">
+                            <option value="userId">ID do Usuário</option>
+                            <option value="username">Nome de Usuário</option>
+                            <option value="roleId">Cargo (Role ID)</option>
+                        </select>
+                        <input type="text" id="permission-value" placeholder="Digite o valor..." required>
+                        <button type="submit" class="btn btn-primary">Adicionar</button>
+                    </div>
+                    <small id="permission-help-text">Digite o ID numérico do usuário Discord</small>
+                </form>
+                
+                <!-- Role selector (hidden by default) -->
+                <div id="role-selector-container" class="role-selector-container" style="display: none;">
+                    <h4>Ou selecione um cargo:</h4>
+                    <div id="role-selector" class="role-selector">
+                        <div class="loading">Carregando cargos...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="permissions-list">
+                <h3>Permissões Ativas</h3>
+                <div class="permissions-legend">
+                    <span class="legend-item"><span class="legend-color user-id"></span> ID do Usuário</span>
+                    <span class="legend-item"><span class="legend-color username"></span> Nome de Usuário</span>
+                    <span class="legend-item"><span class="legend-color role-id"></span> Cargo</span>
+                </div>
+                <div id="permissions-grid" class="permissions-grid">
+                    <div class="loading">Carregando...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Deploy Section -->
+        <section id="deploy" class="section">
+            <h2>Deploy de Comandos</h2>
+            
+            <div class="deploy-info-card">
+                <h3>Comandos Disponíveis</h3>
+                <div id="available-commands" class="available-commands">
+                    <div class="loading">Carregando...</div>
+                </div>
+            </div>
+            
+            <div class="deploy-global-card">
+                <h3>Deploy Global</h3>
+                <p class="deploy-description">
+                    Comandos globais ficam disponíveis em todos os servidores onde o bot está. 
+                    <strong>Pode levar até 1 hora</strong> para propagar.
+                </p>
+                <div class="deploy-status" id="global-deploy-status">
+                    <span class="status-indicator"></span>
+                    <span class="status-text">Carregando...</span>
+                </div>
+                <div class="deploy-actions">
+                    <button class="btn btn-primary" id="btn-deploy-global">Fazer Deploy Global</button>
+                    <button class="btn btn-danger" id="btn-clear-global">Remover Comandos Globais</button>
+                </div>
+            </div>
+            
+            <div class="deploy-guild-card">
+                <h3>Deploy por Servidor</h3>
+                <p class="deploy-description">
+                    Comandos de servidor são disponibilizados <strong>instantaneamente</strong>.
+                    Ideal para testes ou servidores específicos.
+                </p>
+                <div id="guilds-deploy-list" class="guilds-deploy-list">
+                    <div class="loading">Carregando servidores...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Logs Section -->
+        <section id="logs" class="section">
+            <h2>Logs do Sistema</h2>
+            
+            <div class="filters-card">
+                <div class="filters-row">
+                    <div class="filter-group">
+                        <label>Nível:</label>
+                        <select id="filter-log-level">
+                            <option value="">Todos</option>
+                            <option value="ERROR">Error</option>
+                            <option value="WARN">Warning</option>
+                            <option value="INFO">Info</option>
+                            <option value="DEBUG">Debug</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Limite:</label>
+                        <select id="filter-log-limit">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-secondary" id="btn-filter-logs">Filtrar</button>
+                    <button class="btn btn-danger" id="btn-clear-logs">Limpar Logs</button>
+                </div>
+            </div>
+            
+            <div class="logs-container" id="logs-container">
+                <div class="loading">Carregando...</div>
+            </div>
+        </section>
+    </main>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - BeeWiki Admin</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="icon" href="/assets/logo.png" type="image/png">
+</head>
+<body class="login-page">
+    <div class="login-container">
+        <div class="login-box">
+            <img src="/assets/logo.png" alt="BeeWiki" class="login-logo">
+            <h1>BeeWiki Admin</h1>
+            <p class="subtitle">Painel de Administração</p>
+            
+            <form action="/login" method="POST" class="login-form">
+                <div class="form-group">
+                    <label for="password">Senha</label>
+                    <input type="password" id="password" name="password" required autofocus>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Entrar</button>
+            </form>
+            
+            <script>
+                if (window.location.search.includes('error=1')) {
+                    const form = document.querySelector('.login-form');
+                    const error = document.createElement('div');
+                    error.className = 'error-message';
+                    error.textContent = 'Senha incorreta';
+                    form.insertBefore(error, form.firstChild);
+                }
+            </script>
+        </div>
+    </div>
+</body>
+</html>

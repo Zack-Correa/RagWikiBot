@@ -6,6 +6,7 @@
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const InteractionHandler = require('./handlers/interactionHandler');
 const marketAlertService = require('./services/marketAlertService');
+const webServer = require('./web/server');
 const config = require('./config');
 const logger = require('./utils/logger');
 
@@ -49,6 +50,18 @@ const handleReady = () => {
     marketAlertService.initialize(client);
     marketAlertService.start();
     logger.info('Market alert service started');
+
+    // Start admin web panel if password is configured
+    const adminPort = process.env.ADMIN_PORT || 3000;
+    if (process.env.ADMIN_PASSWORD) {
+        // Pass Discord client to web server for user lookups
+        webServer.setDiscordClient(client);
+        webServer.start(adminPort).catch(error => {
+            logger.error('Failed to start admin panel', { error: error.message });
+        });
+    } else {
+        logger.warn('ADMIN_PASSWORD not set - admin panel disabled');
+    }
 };
 
 // Support both new (clientReady) and legacy (ready) events

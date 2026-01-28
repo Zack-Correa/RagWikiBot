@@ -5,20 +5,13 @@
 
 const logger = require('../utils/logger');
 const alertStorage = require('../utils/alertStorage');
+const configStorage = require('../utils/configStorage');
 const gnjoy = require('../integrations/database/gnjoy');
-
-// Check interval: 5 minutes
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-
-// Cooldown between notifications for the same alert (1 hour)
-const NOTIFICATION_COOLDOWN_MS = 60 * 60 * 1000;
-
-// Delay between API requests to avoid rate limiting
-const REQUEST_DELAY_MS = 2000;
 
 let client = null;
 let intervalId = null;
 let isRunning = false;
+let currentIntervalMs = null;
 
 /**
  * Initializes the market alert service
@@ -43,19 +36,43 @@ function start() {
         return;
     }
     
+    // Get current interval from config
+    currentIntervalMs = configStorage.getCheckIntervalMs();
+    
     // Run first check after 1 minute to let the bot fully start
     setTimeout(() => {
         runAlertCheck();
     }, 60 * 1000);
     
-    // Then run every 15 minutes
+    // Then run at configured interval
     intervalId = setInterval(() => {
         runAlertCheck();
-    }, CHECK_INTERVAL_MS);
+    }, currentIntervalMs);
     
     logger.info('Market alert service started', { 
-        intervalMinutes: CHECK_INTERVAL_MS / 60000 
+        intervalMinutes: currentIntervalMs / 60000 
     });
+}
+
+/**
+ * Restarts the service with updated config (call after config changes)
+ */
+function restart() {
+    const wasRunning = !!intervalId;
+    stop();
+    
+    if (wasRunning) {
+        // Start immediately without the 1-minute delay
+        currentIntervalMs = configStorage.getCheckIntervalMs();
+        
+        intervalId = setInterval(() => {
+            runAlertCheck();
+        }, currentIntervalMs);
+        
+        logger.info('Market alert service restarted with new config', { 
+            intervalMinutes: currentIntervalMs / 60000 
+        });
+    }
 }
 
 /**
@@ -118,7 +135,7 @@ async function runAlertCheck() {
                 }
                 
                 // Delay between requests to avoid rate limiting
-                await sleep(REQUEST_DELAY_MS);
+                await sleep(configStorage.getRequestDelayMs());
             } catch (error) {
                 errorsCount++;
                 logger.warn('Error checking alert group', {
@@ -190,12 +207,13 @@ async function processAlertResults(alert, items) {
         }
         
         // Check cooldown (skip cooldown if we found a lower price)
+        const cooldownMs = configStorage.getCooldownMs();
         if (!isLowerPrice && alert.lastNotified) {
             const timeSinceNotified = Date.now() - new Date(alert.lastNotified).getTime();
-            if (timeSinceNotified < NOTIFICATION_COOLDOWN_MS) {
+            if (timeSinceNotified < cooldownMs) {
                 logger.debug('Alert in cooldown', { 
                     alertId: alert.id,
-                    remainingMinutes: Math.ceil((NOTIFICATION_COOLDOWN_MS - timeSinceNotified) / 60000)
+                    remainingMinutes: Math.ceil((cooldownMs - timeSinceNotified) / 60000)
                 });
                 return false;
             }
@@ -340,11 +358,13 @@ async function forceCheck() {
  */
 function getStatus() {
     const stats = alertStorage.getStats();
+    const config = configStorage.getFullConfig();
     return {
         running: !!intervalId,
         isChecking: isRunning,
-        intervalMinutes: CHECK_INTERVAL_MS / 60000,
-        cooldownMinutes: NOTIFICATION_COOLDOWN_MS / 60000,
+        intervalMinutes: config.checkIntervalMinutes,
+        cooldownMinutes: config.cooldownMinutes,
+        requestDelayMs: config.requestDelayMs,
         ...stats
     };
 }
@@ -361,6 +381,7 @@ module.exports = {
     initialize,
     start,
     stop,
+    restart,
     forceCheck,
     getStatus
 };
