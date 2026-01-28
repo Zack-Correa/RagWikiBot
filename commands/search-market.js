@@ -43,7 +43,8 @@ module.exports = {
                 .setRequired(false)
                 .addChoices(
                     { name: 'Freya', value: 'FREYA' },
-                    { name: 'Thor', value: 'THOR' }
+                    { name: 'Nidhogg', value: 'NIDHOGG' },
+                    { name: 'Yggdrasil', value: 'YGGDRASIL' }
                 )
         ),
 

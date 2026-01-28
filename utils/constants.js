@@ -88,7 +88,8 @@ module.exports = {
         ITEMS_PER_PAGE: 10,
         SERVERS: {
             FREYA: 'FREYA',
-            THOR: 'THOR'
+            NIDHOGG: 'NIDHOGG',
+            YGGDRASIL: 'YGGDRASIL'
         },
         STORE_TYPES: {
             BUY: 'BUY',

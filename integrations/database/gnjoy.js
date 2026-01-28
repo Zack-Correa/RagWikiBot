@@ -16,7 +16,8 @@ const ENDPOINTS = {
 // Available servers
 const SERVERS = {
     FREYA: 'FREYA',
-    THOR: 'THOR'
+    NIDHOGG: 'NIDHOGG',
+    YGGDRASIL: 'YGGDRASIL'
 };
 
 // Store types
