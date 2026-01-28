@@ -5,16 +5,17 @@
 
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const InteractionHandler = require('./handlers/interactionHandler');
+const marketAlertService = require('./services/marketAlertService');
 const config = require('./config');
 const logger = require('./utils/logger');
 
 // Initialize Discord client with required intents
-// Note: MessageContent intent no longer needed for slash commands
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildMessageReactions // Needed for pagination reactions
+        GatewayIntentBits.GuildMessageReactions, // Needed for pagination reactions
+        GatewayIntentBits.DirectMessages // Needed for sending DM alerts
     ]
 });
 
@@ -43,6 +44,11 @@ const handleReady = () => {
         }],
         status: 'online'
     });
+
+    // Initialize and start the market alert service
+    marketAlertService.initialize(client);
+    marketAlertService.start();
+    logger.info('Market alert service started');
 };
 
 // Support both new (clientReady) and legacy (ready) events
@@ -72,6 +78,21 @@ process.on('unhandledRejection', (error) => {
 process.on('uncaughtException', (error) => {
     logger.error('Uncaught exception', { error: error.message, stack: error.stack });
     process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+    logger.info('Received SIGINT, shutting down gracefully...');
+    marketAlertService.stop();
+    client.destroy();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    logger.info('Received SIGTERM, shutting down gracefully...');
+    marketAlertService.stop();
+    client.destroy();
+    process.exit(0);
 });
 
 // Login to Discord

@@ -9,29 +9,69 @@ RagWiki é um bot para consultar itens, quests e mais em varias Wiki/Databases d
 - [x] Busca de itens por nome na database [Divine-Pride](https://www.divine-pride.net/database/item) (com paginação)
 - [x] Busca de monstros por ID na database [Divine-Pride](https://www.divine-pride.net/database/monster)
 - [x] Busca de mapas na database [Divine-Pride](https://www.divine-pride.net/database/map/)
+- [x] Busca no mercado oficial LATAM (sistema de transações do Ragnarok Online)
+- [x] Sistema de alertas de mercado com notificações por DM (apenas admins)
 
 ## Comandos
 Todos os comandos utilizam **Slash Commands** (comandos com barra `/`). Basta digitar `/` no Discord para ver a lista de comandos disponíveis.
+
+### Busca na Wiki
 
 > `/wiki termo:TERMO_PESQUISADO`
 
 A funcionalidade ```wiki``` retorna todos os resultados encontrados no projeto [bROwiki](https://browiki.org/).
 
-> `/buscar-item nome:NOME_DO_ITEM servidor:SERVIDOR`
+### Busca de Itens
+
+> `/buscar-item busca:NOME_DO_ITEM idioma:IDIOMA`
 
 A funcionalidade ```buscar-item``` retorna todos os resultados encontrados para o item desejado na database [Divine-Pride](https://www.divine-pride.net/database/item). Os resultados são paginados (10 itens por página) e você pode navegar usando os botões de paginação.
 
-> `/buscar-item-id id:ID_DO_ITEM servidor:SERVIDOR`
+### Busca de Monstros
 
-A funcionalidade ```buscar-item-id``` retorna a descrição completa do item desejado no servidor especificado (opcional) de acordo com a database [Divine-Pride](https://www.divine-pride.net/database/item).
-
-> `/buscar-monstro id:ID_DO_MONSTRO`
+> `/buscar-monstro busca:NOME_DO_MONSTRO idioma:IDIOMA`
 
 A funcionalidade ```buscar-monstro``` retorna informações detalhadas sobre o monstro, incluindo estatísticas, atributos, elemento, fraqueza, experiência, drops e mapas onde aparece.
 
-> `/buscar-mapa id:ID_DO_MAPA`
+### Busca de Mapas
 
-A funcionalidade ```buscar-mapa``` retorna informações sobre o mapa, incluindo nome, tipo, música, monstros que aparecem e NPCs presentes. O ID do mapa deve estar no formato string (ex: `hu_fild03`, `prt_fild01`).
+> `/buscar-mapa busca:NOME_DO_MAPA idioma:IDIOMA`
+
+A funcionalidade ```buscar-mapa``` retorna informações sobre o mapa, incluindo nome, tipo, música, monstros que aparecem e NPCs presentes.
+
+### Busca no Mercado
+
+> `/buscar-mercado busca:NOME_DO_ITEM tipo:Comprando|Vendendo servidor:Freya|Nidhogg|Yggdrasil`
+
+A funcionalidade ```buscar-mercado``` pesquisa itens no sistema de transações oficial do Ragnarok Online LATAM. Mostra os anúncios atuais com preços, quantidades, nomes das lojas e personagens vendedores.
+
+### Alertas de Mercado (Apenas Admins)
+
+> `/alerta-mercado adicionar item:NOME_DO_ITEM tipo:Comprando|Vendendo servidor:SERVIDOR preco-maximo:PRECO_MAX quantidade-minima:QTD_MIN`
+
+Cria um alerta de mercado. O bot verifica o mercado a cada 15 minutos e envia uma notificação por DM quando encontrar itens que correspondem aos seus critérios. Também notifica imediatamente quando um preço mais baixo é detectado.
+
+> `/alerta-mercado listar`
+
+Lista todos os seus alertas de mercado configurados.
+
+> `/alerta-mercado remover id:ID_DO_ALERTA`
+
+Remove um alerta específico pelo ID.
+
+> `/alerta-mercado limpar`
+
+Remove todos os seus alertas de uma vez.
+
+> `/alerta-mercado status`
+
+Mostra o status do sistema de alertas (total de alertas, buscas únicas, última verificação).
+
+> `/alerta-mercado verificar`
+
+Força uma verificação imediata do mercado para todos os alertas.
+
+### Ajuda
 
 > `/ajuda`
 
