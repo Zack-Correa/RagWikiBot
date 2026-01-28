@@ -8,7 +8,6 @@ BeeWiki is a Discord bot for Ragnarok Online LATAM that provides item search, ma
 - [x] Search items by ID/name on [Divine-Pride](https://www.divine-pride.net/database/item) (LATAM/bRO servers)
 - [x] Search monsters on [Divine-Pride](https://www.divine-pride.net/database/monster)
 - [x] Search maps on [Divine-Pride](https://www.divine-pride.net/database/map/)
-- [x] Search cards by effect or name
 - [x] Search the official LATAM market (trading system)
 - [x] Market alerts system with DM notifications
 - [x] Price history tracking
@@ -72,20 +71,6 @@ Returns map information including name, type, background music, monsters, and NP
 **Parameters:**
 - `busca` - Map name or ID (required)
 - `idioma` - Language: Português, English, Español (default: Português)
-
----
-
-### Card Search
-
-```
-/buscar-card busca:SEARCH_TERM tipo:SEARCH_TYPE
-```
-
-Searches for cards by effect or name. Great for finding cards with specific bonuses.
-
-**Parameters:**
-- `busca` - Card effect or name (e.g., "dano em mortos-vivos", "Hydra") (required)
-- `tipo` - Search type: Por Nome, Por Efeito, Ambos (default: Ambos)
 
 ---
 
@@ -257,3 +242,4 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 ## Leia-me em português
 
 [LEIA-ME](https://github.com/Zack-Correa/RagWikiBot/blob/dev/README_PT-BR.md)
+
