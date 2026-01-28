@@ -7,6 +7,7 @@ const { Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+const metricsService = require('../services/metricsService');
 
 class InteractionHandler {
     constructor() {
@@ -51,6 +52,10 @@ class InteractionHandler {
             return;
         }
 
+        // Start timing for metrics
+        const startTime = Date.now();
+        let hasError = false;
+
         try {
             logger.info('Executing command', {
                 command: interaction.commandName,
@@ -60,6 +65,7 @@ class InteractionHandler {
 
             await command.execute(interaction);
         } catch (error) {
+            hasError = true;
             logger.error('Error executing command', {
                 command: interaction.commandName,
                 error: error.message,
@@ -78,6 +84,15 @@ class InteractionHandler {
                     // Ignore errors if interaction already handled
                 });
             }
+        } finally {
+            // Record metrics regardless of success/failure
+            metricsService.recordCommandExecution({
+                command: interaction.commandName,
+                userId: interaction.user.id,
+                guildId: interaction.guild?.id || null,
+                startTime,
+                error: hasError
+            });
         }
     }
 

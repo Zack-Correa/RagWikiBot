@@ -15,9 +15,11 @@
         </div>
         <div class="nav-links">
             <a href="#dashboard" class="nav-link active" data-section="dashboard">Dashboard</a>
+            <a href="#metrics" class="nav-link" data-section="metrics">Métricas</a>
             <a href="#alerts" class="nav-link" data-section="alerts">Alertas</a>
             <a href="#config" class="nav-link" data-section="config">Configurações</a>
             <a href="#whitelist" class="nav-link" data-section="whitelist">Permissões</a>
+            <a href="#news" class="nav-link" data-section="news">Notícias</a>
             <a href="#deploy" class="nav-link" data-section="deploy">Deploy</a>
             <a href="#logs" class="nav-link" data-section="logs">Logs</a>
             <a href="/logout" class="nav-link logout">Sair</a>
@@ -72,11 +74,126 @@
                     <button class="btn btn-secondary" id="btn-refresh">Atualizar</button>
                 </div>
             </div>
+            
+            <div class="server-status-card">
+                <h3>🖥️ Status dos Servidores</h3>
+                <div class="server-status-grid" id="server-status-grid">
+                    <div class="loading">Carregando...</div>
+                </div>
+                <div class="server-status-info">
+                    <span class="info-label">Última verificação:</span>
+                    <span class="info-value" id="server-last-check">-</span>
+                    <span class="info-label" style="margin-left: 20px;">Servidor:</span>
+                    <span class="info-value" id="server-account-address">-</span>
+                </div>
+                <div class="server-status-actions">
+                    <button class="btn btn-primary" id="btn-check-servers">Verificar Agora</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Metrics Section -->
+        <section id="metrics" class="section">
+            <h2>Métricas de Uso</h2>
+            
+            <div class="metrics-overview">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="metrics-today-commands">-</div>
+                        <div class="stat-label">Comandos Hoje</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="metrics-today-users">-</div>
+                        <div class="stat-label">Usuários Hoje</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="metrics-total-commands">-</div>
+                        <div class="stat-label">Total de Comandos</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="metrics-total-users">-</div>
+                        <div class="stat-label">Total de Usuários</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metrics-charts-row">
+                <div class="chart-card">
+                    <h3>Comandos por Dia (últimos 7 dias)</h3>
+                    <div class="chart-container">
+                        <canvas id="chart-commands-daily"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h3>Distribuição por Hora (hoje)</h3>
+                    <div class="chart-container">
+                        <canvas id="chart-commands-hourly"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metrics-commands-card">
+                <h3>Comandos Mais Usados</h3>
+                <div class="top-commands-grid" id="top-commands-grid">
+                    <div class="loading">Carregando...</div>
+                </div>
+            </div>
+
+            <div class="metrics-actions">
+                <button class="btn btn-secondary" id="btn-refresh-metrics">🔄 Atualizar Métricas</button>
+                <button class="btn btn-danger" id="btn-reset-metrics">Resetar Métricas</button>
+            </div>
         </section>
 
         <!-- Alerts Section -->
         <section id="alerts" class="section">
             <h2>Gerenciar Alertas</h2>
+            
+            <div class="create-alert-card">
+                <h3>➕ Criar Novo Alerta</h3>
+                <form id="create-alert-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="alert-user-id">ID do Usuário Discord *</label>
+                            <input type="text" id="alert-user-id" placeholder="Ex: 123456789012345678" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="alert-search-term">Item *</label>
+                            <input type="text" id="alert-search-term" placeholder="Nome do item" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="alert-server">Servidor *</label>
+                            <select id="alert-server" required>
+                                <option value="FREYA">Freya</option>
+                                <option value="NIDHOGG">Nidhogg</option>
+                                <option value="YGGDRASIL">Yggdrasil</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="alert-type">Tipo *</label>
+                            <select id="alert-type" required>
+                                <option value="BUY">Comprando</option>
+                                <option value="SELL">Vendendo</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="alert-max-price">Preço Máximo (opcional)</label>
+                            <input type="number" id="alert-max-price" placeholder="Ex: 1000000" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="alert-min-quantity">Quantidade Mínima (opcional)</label>
+                            <input type="number" id="alert-min-quantity" placeholder="Ex: 10" min="1">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-success">Criar Alerta</button>
+                    </div>
+                </form>
+            </div>
             
             <div class="filters-card">
                 <div class="filters-row">
@@ -202,12 +319,84 @@
             </div>
         </section>
 
+        <!-- News Section -->
+        <section id="news" class="section">
+            <h2>Notícias do GNJoy</h2>
+            
+            <div class="news-cache-card">
+                <h3>Status do Cache</h3>
+                <div class="news-cache-info">
+                    <div class="info-row">
+                        <span class="info-label">Notícias em cache:</span>
+                        <span class="info-value" id="news-count">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Última atualização:</span>
+                        <span class="info-value" id="news-last-refresh">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Dias de atualização:</span>
+                        <span class="info-value" id="news-refresh-days">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Próxima atualização:</span>
+                        <span class="info-value" id="news-should-refresh">-</span>
+                    </div>
+                </div>
+                <div class="news-actions">
+                    <button class="btn btn-primary" id="btn-refresh-news">Forçar Atualização</button>
+                    <button class="btn btn-secondary" id="btn-reload-news">Recarregar Lista</button>
+                </div>
+            </div>
+            
+            <div class="news-stats-card">
+                <h3>Categorias</h3>
+                <div class="news-categories-grid">
+                    <div class="news-category-card">
+                        <div class="category-icon">⚠️</div>
+                        <div class="category-count" id="news-cat-avisos">0</div>
+                        <div class="category-label">Avisos</div>
+                    </div>
+                    <div class="news-category-card">
+                        <div class="category-icon">🔧</div>
+                        <div class="category-count" id="news-cat-atualizacoes">0</div>
+                        <div class="category-label">Atualizações</div>
+                    </div>
+                    <div class="news-category-card">
+                        <div class="category-icon">🎉</div>
+                        <div class="category-count" id="news-cat-eventos">0</div>
+                        <div class="category-label">Eventos</div>
+                    </div>
+                    <div class="news-category-card">
+                        <div class="category-icon">📋</div>
+                        <div class="category-count" id="news-cat-outros">0</div>
+                        <div class="category-label">Outros</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="news-list-card">
+                <h3>Lista de Notícias</h3>
+                <div id="news-list" class="news-list">
+                    <div class="loading">Carregando notícias...</div>
+                </div>
+            </div>
+        </section>
+
         <!-- Deploy Section -->
         <section id="deploy" class="section">
             <h2>Deploy de Comandos</h2>
             
             <div class="deploy-info-card">
                 <h3>Comandos Disponíveis</h3>
+                <p class="deploy-description">
+                    Selecione os comandos que deseja deployar. Se nenhum for selecionado, todos serão deployados.
+                </p>
+                <div class="commands-selection-actions">
+                    <button class="btn btn-sm btn-secondary" id="btn-select-all-commands">Selecionar Todos</button>
+                    <button class="btn btn-sm btn-secondary" id="btn-deselect-all-commands">Desmarcar Todos</button>
+                    <span class="selected-count" id="selected-commands-count">0 selecionados</span>
+                </div>
                 <div id="available-commands" class="available-commands">
                     <div class="loading">Carregando...</div>
                 </div>
@@ -279,6 +468,7 @@
 
     <div class="toast-container" id="toast-container"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

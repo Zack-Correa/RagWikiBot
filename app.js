@@ -53,10 +53,11 @@ const handleReady = () => {
 
     // Start admin web panel if password is configured
     const adminPort = process.env.ADMIN_PORT || 3000;
+    const adminHost = process.env.ADMIN_HOST || '0.0.0.0';
     if (process.env.ADMIN_PASSWORD) {
         // Pass Discord client to web server for user lookups
         webServer.setDiscordClient(client);
-        webServer.start(adminPort).catch(error => {
+        webServer.start(adminPort, adminHost).catch(error => {
             logger.error('Failed to start admin panel', { error: error.message });
         });
     } else {

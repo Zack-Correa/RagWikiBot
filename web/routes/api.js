@@ -8,6 +8,7 @@ const alertStorage = require('../../utils/alertStorage');
 const configStorage = require('../../utils/configStorage');
 const marketAlertService = require('../../services/marketAlertService');
 const deployService = require('../../services/deployService');
+const gnjoyEvents = require('../../integrations/database/gnjoy-events');
 const logger = require('../../utils/logger');
 const { requireAuth } = require('../middleware/auth');
 
@@ -129,6 +130,66 @@ module.exports = function createApiRoutes(getDiscordClient) {
         } catch (error) {
             logger.error('Error getting alerts', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/alerts
+     * Creates a new alert (admin only)
+     */
+    router.post('/alerts', (req, res) => {
+        try {
+            const { userId, searchTerm, server, storeType, maxPrice, minQuantity } = req.body;
+            
+            // Validate required fields
+            if (!userId || !searchTerm || !server || !storeType) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Campos obrigatórios: userId, searchTerm, server, storeType' 
+                });
+            }
+            
+            // Validate server
+            const validServers = ['FREYA', 'NIDHOGG', 'YGGDRASIL'];
+            if (!validServers.includes(server)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Servidor inválido. Use: FREYA, NIDHOGG ou YGGDRASIL' 
+                });
+            }
+            
+            // Validate storeType
+            if (!['BUY', 'SELL'].includes(storeType)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo inválido. Use: BUY ou SELL' 
+                });
+            }
+            
+            // Create the alert
+            const alert = alertStorage.addAlert({
+                userId,
+                searchTerm,
+                storeType,
+                server,
+                maxPrice: maxPrice ? parseInt(maxPrice, 10) : null,
+                minQuantity: minQuantity ? parseInt(minQuantity, 10) : null
+            });
+            
+            logger.info('Alert created by admin', { 
+                alertId: alert.id, 
+                userId, 
+                searchTerm 
+            });
+            
+            res.json({ 
+                success: true, 
+                message: 'Alerta criado com sucesso',
+                data: alert
+            });
+        } catch (error) {
+            logger.error('Error creating alert', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
         }
     });
 
@@ -640,6 +701,468 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    // ==================== EVENTS ENDPOINTS ====================
+
+    /**
+     * GET /api/events
+     * Returns all events
+     * Query params: source, activeOnly
+     */
+    router.get('/events', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { source, activeOnly } = req.query;
+            
+            const events = eventsStorage.getEvents({
+                source: source || null,
+                activeOnly: activeOnly === 'true'
+            });
+            
+            res.json({
+                success: true,
+                data: { events, total: events.length }
+            });
+        } catch (error) {
+            logger.error('Error getting events', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/events
+     * Creates a new manual event
+     */
+    router.post('/events', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { title, description, startDate, endDate, recurring, notifyMinutesBefore } = req.body;
+            
+            if (!title || !startDate || !endDate) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Título, data de início e data de fim são obrigatórios' 
+                });
+            }
+            
+            const event = eventsStorage.addEvent({
+                title,
+                description,
+                source: eventsStorage.EVENT_SOURCES.MANUAL,
+                startDate,
+                endDate,
+                recurring,
+                notifyMinutesBefore: notifyMinutesBefore || [60, 15],
+                createdBy: 'admin'
+            });
+            
+            logger.info('Event created by admin', { eventId: event.id, title });
+            res.json({
+                success: true,
+                data: event,
+                message: 'Evento criado com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error creating event', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/events/:id
+     * Updates an event
+     */
+    router.put('/events/:id', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { id } = req.params;
+            const updates = req.body;
+            
+            const event = eventsStorage.updateEvent(id, updates);
+            
+            if (!event) {
+                return res.status(404).json({ success: false, error: 'Evento não encontrado' });
+            }
+            
+            logger.info('Event updated by admin', { eventId: id });
+            res.json({
+                success: true,
+                data: event,
+                message: 'Evento atualizado'
+            });
+        } catch (error) {
+            logger.error('Error updating event', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/events/:id
+     * Removes an event
+     */
+    router.delete('/events/:id', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { id } = req.params;
+            
+            const removed = eventsStorage.removeEvent(id);
+            
+            if (!removed) {
+                return res.status(404).json({ success: false, error: 'Evento não encontrado' });
+            }
+            
+            logger.info('Event removed by admin', { eventId: id });
+            res.json({
+                success: true,
+                message: 'Evento removido'
+            });
+        } catch (error) {
+            logger.error('Error removing event', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/events/stats
+     * Returns events statistics
+     */
+    router.get('/events/stats', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const stats = eventsStorage.getStats();
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting events stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/events/scrape
+     * Forces a GNJoy scrape
+     */
+    router.post('/events/scrape', async (req, res) => {
+        try {
+            const eventNotificationService = require('../../services/eventNotificationService');
+            const result = await eventNotificationService.forceScrape();
+            
+            logger.info('Event scrape triggered by admin', { result });
+            res.json({
+                success: true,
+                data: result,
+                message: `Scraping concluído: ${result.added} novo(s), ${result.scraped} encontrado(s)`
+            });
+        } catch (error) {
+            logger.error('Error scraping events', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== SERVER STATUS ENDPOINTS ====================
+
+    /**
+     * GET /api/server-status
+     * Returns server status for all servers
+     */
+    router.get('/server-status', (req, res) => {
+        try {
+            const serverStatusService = require('../../services/serverStatusService');
+            const status = serverStatusService.getStatus();
+            res.json({
+                success: true,
+                data: status
+            });
+        } catch (error) {
+            logger.error('Error getting server status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/server-status/check
+     * Forces a status check
+     */
+    router.post('/server-status/check', async (req, res) => {
+        try {
+            const serverStatusService = require('../../services/serverStatusService');
+            const results = await serverStatusService.forceCheck();
+            res.json({
+                success: true,
+                data: results,
+                message: 'Verificação concluída'
+            });
+        } catch (error) {
+            logger.error('Error checking server status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/server-status/history
+     * Returns status change history
+     */
+    router.get('/server-status/history', (req, res) => {
+        try {
+            const serverStatusStorage = require('../../utils/serverStatusStorage');
+            const { limit } = req.query;
+            const history = serverStatusStorage.getHistory(parseInt(limit, 10) || 20);
+            res.json({
+                success: true,
+                data: { history, total: history.length }
+            });
+        } catch (error) {
+            logger.error('Error getting status history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PRICING ANALYSIS ENDPOINTS ====================
+
+    /**
+     * GET /api/pricing/analyze/:itemId
+     * Analyzes price for an item
+     * Query params: price, server, storeType, days
+     */
+    router.get('/pricing/analyze/:itemId', (req, res) => {
+        try {
+            const pricingService = require('../../services/pricingService');
+            const { itemId } = req.params;
+            const { price, server, storeType, days } = req.query;
+            
+            let analysis;
+            if (price) {
+                analysis = pricingService.analyzePrice(
+                    itemId,
+                    parseInt(price, 10),
+                    server || 'FREYA',
+                    storeType || 'SELL',
+                    parseInt(days, 10) || 30
+                );
+            } else {
+                analysis = pricingService.analyzeItem(
+                    itemId,
+                    server || null,
+                    storeType || null,
+                    parseInt(days, 10) || 30
+                );
+            }
+            
+            if (!analysis) {
+                return res.status(404).json({ success: false, error: 'Item not found or insufficient data' });
+            }
+            
+            res.json({
+                success: true,
+                data: analysis
+            });
+        } catch (error) {
+            logger.error('Error analyzing price', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/pricing/trending
+     * Gets items with significant price changes
+     * Query params: days, minChange
+     */
+    router.get('/pricing/trending', (req, res) => {
+        try {
+            const pricingService = require('../../services/pricingService');
+            const { days, minChange } = req.query;
+            
+            const trending = pricingService.getTrendingItems(
+                parseInt(days, 10) || 7,
+                parseInt(minChange, 10) || 10
+            );
+            
+            res.json({
+                success: true,
+                data: { items: trending, total: trending.length }
+            });
+        } catch (error) {
+            logger.error('Error getting trending items', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PRICE HISTORY ENDPOINTS ====================
+
+    /**
+     * GET /api/price-history/stats
+     * Returns price history statistics
+     */
+    router.get('/price-history/stats', (req, res) => {
+        try {
+            const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+            const stats = priceHistoryStorage.getStats();
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting price history stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/price-history/search
+     * Searches for items in price history
+     * Query params: term, limit
+     */
+    router.get('/price-history/search', (req, res) => {
+        try {
+            const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+            const { term, limit } = req.query;
+            
+            if (!term) {
+                return res.status(400).json({ success: false, error: 'Search term is required' });
+            }
+            
+            const items = priceHistoryStorage.searchItems(term, parseInt(limit, 10) || 20);
+            res.json({
+                success: true,
+                data: { items, total: items.length }
+            });
+        } catch (error) {
+            logger.error('Error searching price history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/price-history/item/:itemId
+     * Returns price history for a specific item
+     * Query params: server, storeType, days
+     */
+    router.get('/price-history/item/:itemId', (req, res) => {
+        try {
+            const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+            const { itemId } = req.params;
+            const { server, storeType, days } = req.query;
+            
+            const history = priceHistoryStorage.getItemHistory(
+                itemId,
+                server || null,
+                storeType || null,
+                parseInt(days, 10) || 30
+            );
+            
+            if (!history) {
+                return res.status(404).json({ success: false, error: 'Item not found in price history' });
+            }
+            
+            res.json({
+                success: true,
+                data: history
+            });
+        } catch (error) {
+            logger.error('Error getting item price history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== METRICS ENDPOINTS ====================
+
+    /**
+     * GET /api/metrics/dashboard
+     * Returns dashboard statistics for metrics
+     */
+    router.get('/metrics/dashboard', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const stats = metricsService.getDashboardStats();
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting metrics dashboard', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/chart
+     * Returns chart data for metrics visualization
+     * Query params: days (default 7)
+     */
+    router.get('/metrics/chart', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const days = parseInt(req.query.days, 10) || 7;
+            const chartData = metricsService.getChartData(days);
+            res.json({
+                success: true,
+                data: chartData
+            });
+        } catch (error) {
+            logger.error('Error getting metrics chart', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/hourly
+     * Returns hourly distribution for today
+     */
+    router.get('/metrics/hourly', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const hourlyData = metricsService.getHourlyDistribution();
+            res.json({
+                success: true,
+                data: hourlyData
+            });
+        } catch (error) {
+            logger.error('Error getting hourly metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/command/:name
+     * Returns statistics for a specific command
+     * Query params: days (default 30)
+     */
+    router.get('/metrics/command/:name', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const { name } = req.params;
+            const days = parseInt(req.query.days, 10) || 30;
+            const stats = metricsService.getCommandStats(name, days);
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting command metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/metrics/reset
+     * Resets all metrics (admin only, use with caution)
+     */
+    router.post('/metrics/reset', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            metricsService.resetMetrics();
+            logger.info('Metrics reset by admin');
+            res.json({
+                success: true,
+                message: 'Métricas resetadas com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error resetting metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== LEGACY WHITELIST ENDPOINTS (backwards compatibility) ====================
 
     /**
@@ -661,6 +1184,59 @@ module.exports = function createApiRoutes(getDiscordClient) {
             });
         } catch (error) {
             logger.error('Error getting whitelist', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // =====================
+    // News Routes
+    // =====================
+
+    /**
+     * GET /api/news
+     * Get news list and cache info
+     */
+    router.get('/news', async (req, res) => {
+        try {
+            const cacheInfo = gnjoyEvents.getNewsCacheInfo();
+            const news = await gnjoyEvents.getLatestNews();
+            const categories = gnjoyEvents.categorizeNews(news);
+            
+            res.json({
+                success: true,
+                data: {
+                    cache: cacheInfo,
+                    news: news,
+                    categories: {
+                        avisos: categories.avisos.length,
+                        atualizacoes: categories.atualizacoes.length,
+                        eventos: categories.eventos.length,
+                        outros: categories.outros.length
+                    },
+                    categorizedNews: categories
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting news', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/news/refresh
+     * Force refresh news cache
+     */
+    router.post('/news/refresh', async (req, res) => {
+        try {
+            logger.info('Admin forcing news refresh');
+            const result = await gnjoyEvents.forceRefreshNews();
+            
+            res.json({
+                success: result.success,
+                data: result
+            });
+        } catch (error) {
+            logger.error('Error refreshing news', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });
