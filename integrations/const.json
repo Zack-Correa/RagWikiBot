@@ -38,6 +38,14 @@
             "params": {
                 "server": ""
             }
+        },
+        {
+            "url": "https://ro.gnjoylatam.com/pt/intro/shop-search/trading",
+            "params": {
+                "storeType": "",
+                "serverType": "",
+                "searchWord": ""
+            }
         }
     ],
     "assets": [

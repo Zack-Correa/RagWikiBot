@@ -141,7 +141,34 @@ const translations = {
         // Credits
         credits: {
             divinePride: '*Conteúdo fornecido por [Divine Pride](https://www.divine-pride.net)*',
-            browiki: '*Conteúdo fornecido pela [bROWiki](https://browiki.org)*'
+            browiki: '*Conteúdo fornecido pela [bROWiki](https://browiki.org)*',
+            gnjoy: '*Dados do mercado oficial Ragnarok Online LATAM*'
+        },
+        
+        // Market
+        market: {
+            title: 'Mercado - Ragnarok Online',
+            searchInfo: 'Informações da Busca',
+            results: 'Resultados',
+            listings: 'anúncios',
+            selectPlaceholder: 'Selecione um item para ver detalhes',
+            credits: '*Dados do mercado oficial Ragnarok Online LATAM*',
+            error: '❌ Não foi possível buscar no mercado. Tente novamente mais tarde.',
+            storeTypes: {
+                buy: 'Comprando',
+                sell: 'Vendendo'
+            },
+            fields: {
+                price: 'Preço',
+                quantity: 'Quantidade',
+                type: 'Tipo',
+                store: 'Loja',
+                seller: 'Vendedor',
+                slots: 'Slots',
+                category: 'Categoria',
+                itemId: 'Item ID',
+                links: 'Links'
+            }
         },
         
         // Monster races
@@ -320,7 +347,34 @@ const translations = {
         // Credits
         credits: {
             divinePride: '*Content provided by [Divine Pride](https://www.divine-pride.net)*',
-            browiki: '*Content provided by [bROWiki](https://browiki.org)*'
+            browiki: '*Content provided by [bROWiki](https://browiki.org)*',
+            gnjoy: '*Data from official Ragnarok Online LATAM market*'
+        },
+        
+        // Market
+        market: {
+            title: 'Market - Ragnarok Online',
+            searchInfo: 'Search Information',
+            results: 'Results',
+            listings: 'listings',
+            selectPlaceholder: 'Select an item to view details',
+            credits: '*Data from official Ragnarok Online LATAM market*',
+            error: '❌ Could not search the market. Please try again later.',
+            storeTypes: {
+                buy: 'Buying',
+                sell: 'Selling'
+            },
+            fields: {
+                price: 'Price',
+                quantity: 'Quantity',
+                type: 'Type',
+                store: 'Store',
+                seller: 'Seller',
+                slots: 'Slots',
+                category: 'Category',
+                itemId: 'Item ID',
+                links: 'Links'
+            }
         },
         
         // Monster races
@@ -499,7 +553,34 @@ const translations = {
         // Credits
         credits: {
             divinePride: '*Contenido proporcionado por [Divine Pride](https://www.divine-pride.net)*',
-            browiki: '*Contenido proporcionado por [bROWiki](https://browiki.org)*'
+            browiki: '*Contenido proporcionado por [bROWiki](https://browiki.org)*',
+            gnjoy: '*Datos del mercado oficial de Ragnarok Online LATAM*'
+        },
+        
+        // Market
+        market: {
+            title: 'Mercado - Ragnarok Online',
+            searchInfo: 'Información de Búsqueda',
+            results: 'Resultados',
+            listings: 'anuncios',
+            selectPlaceholder: 'Seleccione un ítem para ver detalles',
+            credits: '*Datos del mercado oficial de Ragnarok Online LATAM*',
+            error: '❌ No se pudo buscar en el mercado. Inténtelo de nuevo más tarde.',
+            storeTypes: {
+                buy: 'Comprando',
+                sell: 'Vendiendo'
+            },
+            fields: {
+                price: 'Precio',
+                quantity: 'Cantidad',
+                type: 'Tipo',
+                store: 'Tienda',
+                seller: 'Vendedor',
+                slots: 'Ranuras',
+                category: 'Categoría',
+                itemId: 'ID del Ítem',
+                links: 'Enlaces'
+            }
         },
         
         // Monster races
