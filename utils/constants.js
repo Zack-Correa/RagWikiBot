@@ -70,7 +70,8 @@ module.exports = {
     CUSTOM_IDS: {
         ITEM_MENU: 'item_details_menu',
         MONSTER_MENU: 'monster_details_menu',
-        MAP_MENU: 'map_details_menu'
+        MAP_MENU: 'map_details_menu',
+        MARKET_MENU: 'market_item_select'
     },
     
     // Image URLs patterns
@@ -78,7 +79,21 @@ module.exports = {
         ITEM: (id) => `https://www.divine-pride.net/img/items/collection/kro/${id}`,
         MONSTER: (id) => `https://static.divine-pride.net/images/mobs/png/${id}.png`,
         MAP_ORIGINAL: (id) => `https://www.divine-pride.net/img/map/original/${id}`,
-        MAP_RAW: (id) => `https://www.divine-pride.net/img/map/raw/${id}`
+        MAP_RAW: (id) => `https://www.divine-pride.net/img/map/raw/${id}`,
+        GNJOY_THUMBNAIL: 'https://assets.gnjoylatam.com/static/web/ro/assets/images/ro_og.webp'
+    },
+    
+    // Market/Trading constants
+    MARKET: {
+        ITEMS_PER_PAGE: 10,
+        SERVERS: {
+            FREYA: 'FREYA',
+            THOR: 'THOR'
+        },
+        STORE_TYPES: {
+            BUY: 'BUY',
+            SELL: 'SELL'
+        }
     },
     
     // API Configuration
