@@ -4,6 +4,9 @@
  */
 
 const express = require('express');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const alertStorage = require('../../utils/alertStorage');
 const configStorage = require('../../utils/configStorage');
 const partyStorage = require('../../utils/partyStorage');
@@ -1523,6 +1526,128 @@ module.exports = function createApiRoutes(getDiscordClient) {
             });
         } catch (error) {
             logger.error('Error removing participant', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== BOT UPDATE ROUTES ====================
+
+    /**
+     * GET /api/updates/status
+     * Returns current git status (branch, commit)
+     */
+    router.get('/updates/status', async (req, res) => {
+        try {
+            const [branchResult, commitResult] = await Promise.all([
+                execAsync('git rev-parse --abbrev-ref HEAD'),
+                execAsync('git rev-parse HEAD')
+            ]);
+            
+            res.json({
+                success: true,
+                data: {
+                    branch: branchResult.stdout.trim(),
+                    currentCommit: commitResult.stdout.trim()
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting git status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/check
+     * Fetches from remote and checks if there are updates available
+     */
+    router.post('/updates/check', async (req, res) => {
+        try {
+            logger.info('Checking for bot updates');
+            
+            // Fetch from remote
+            await execAsync('git fetch');
+            
+            // Get current branch
+            const branchResult = await execAsync('git rev-parse --abbrev-ref HEAD');
+            const branch = branchResult.stdout.trim();
+            
+            // Check how many commits behind
+            const behindResult = await execAsync(`git rev-list HEAD..origin/${branch} --count`);
+            const commitsBehind = parseInt(behindResult.stdout.trim(), 10);
+            
+            let changes = '';
+            if (commitsBehind > 0) {
+                // Get the log of incoming commits
+                const logResult = await execAsync(`git log HEAD..origin/${branch} --oneline --no-decorate`);
+                changes = logResult.stdout.trim();
+            }
+            
+            res.json({
+                success: true,
+                data: {
+                    hasUpdates: commitsBehind > 0,
+                    commitsBehind,
+                    changes,
+                    branch
+                }
+            });
+        } catch (error) {
+            logger.error('Error checking for updates', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/pull
+     * Pulls latest changes from remote and runs npm install
+     */
+    router.post('/updates/pull', async (req, res) => {
+        try {
+            logger.info('Pulling bot updates');
+            
+            // Pull from remote
+            const pullResult = await execAsync('git pull');
+            logger.info('Git pull completed', { output: pullResult.stdout });
+            
+            // Run npm install to update dependencies
+            logger.info('Running npm install...');
+            const npmResult = await execAsync('npm install --production');
+            logger.info('npm install completed', { output: npmResult.stdout });
+            
+            res.json({
+                success: true,
+                data: {
+                    gitOutput: pullResult.stdout.trim(),
+                    npmOutput: npmResult.stdout.trim()
+                }
+            });
+        } catch (error) {
+            logger.error('Error pulling updates', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/restart
+     * Restarts the bot process
+     */
+    router.post('/updates/restart', async (req, res) => {
+        try {
+            logger.info('Bot restart requested via admin panel');
+            
+            // Send response before restarting
+            res.json({
+                success: true,
+                message: 'Bot está reiniciando...'
+            });
+            
+            // Give time for the response to be sent
+            setTimeout(() => {
+                logger.info('Restarting bot process...');
+                process.exit(0); // Exit cleanly, let process manager restart
+            }, 1000);
+        } catch (error) {
+            logger.error('Error restarting bot', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });

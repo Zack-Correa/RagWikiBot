@@ -91,6 +91,30 @@
                     <button class="btn btn-primary" id="btn-check-servers">Verificar Agora</button>
                 </div>
             </div>
+            
+            <div class="update-card">
+                <h3>🔄 Atualização do Bot</h3>
+                <div class="update-status" id="update-status">
+                    <div class="update-info">
+                        <span class="info-label">Branch:</span>
+                        <span class="info-value" id="update-branch">-</span>
+                        <span class="info-label" style="margin-left: 20px;">Commit atual:</span>
+                        <span class="info-value" id="update-current-commit">-</span>
+                    </div>
+                    <div class="update-check-result" id="update-check-result" style="display: none;">
+                        <div class="update-available">
+                            <span class="update-badge">⬆️ Atualizações disponíveis</span>
+                            <pre id="update-changes"></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="update-actions">
+                    <button class="btn btn-secondary" id="btn-check-updates">🔍 Verificar Atualizações</button>
+                    <button class="btn btn-primary" id="btn-pull-updates" disabled>📥 Baixar Atualizações</button>
+                    <button class="btn btn-danger" id="btn-restart-bot">🔁 Reiniciar Bot</button>
+                </div>
+                <p class="update-warning">⚠️ Reiniciar o bot irá desconectá-lo temporariamente do Discord.</p>
+            </div>
         </section>
 
         <!-- Metrics Section -->

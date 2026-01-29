@@ -78,9 +78,15 @@ function initDashboard() {
     document.getElementById('btn-toggle-service').addEventListener('click', toggleService);
     document.getElementById('btn-refresh').addEventListener('click', loadStats);
     document.getElementById('btn-check-servers').addEventListener('click', forceCheckServers);
+    document.getElementById('btn-check-updates').addEventListener('click', checkForUpdates);
+    document.getElementById('btn-pull-updates').addEventListener('click', pullUpdates);
+    document.getElementById('btn-restart-bot').addEventListener('click', restartBot);
     
     // Load server status on init
     loadServerStatus();
+    
+    // Load update status on init
+    loadUpdateStatus();
 }
 
 async function loadStats() {
@@ -228,6 +234,132 @@ async function forceCheckServers() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Verificar Agora';
+    }
+}
+
+// Bot Updates
+async function loadUpdateStatus() {
+    try {
+        const response = await fetch('/api/updates/status');
+        const result = await response.json();
+        
+        if (result.success) {
+            document.getElementById('update-branch').textContent = result.data.branch || '-';
+            document.getElementById('update-current-commit').textContent = 
+                result.data.currentCommit ? result.data.currentCommit.substring(0, 7) : '-';
+        }
+    } catch (error) {
+        console.error('Error loading update status:', error);
+    }
+}
+
+async function checkForUpdates() {
+    const btn = document.getElementById('btn-check-updates');
+    const pullBtn = document.getElementById('btn-pull-updates');
+    const resultDiv = document.getElementById('update-check-result');
+    const changesEl = document.getElementById('update-changes');
+    
+    btn.disabled = true;
+    btn.textContent = '🔍 Verificando...';
+    
+    try {
+        const response = await fetch('/api/updates/check', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            if (result.data.hasUpdates) {
+                resultDiv.style.display = 'block';
+                resultDiv.querySelector('.update-available span').textContent = 
+                    `⬆️ ${result.data.commitsBehind} commit(s) disponíveis`;
+                changesEl.textContent = result.data.changes || 'Atualizações disponíveis';
+                pullBtn.disabled = false;
+                showToast('Atualizações encontradas!', 'success');
+            } else {
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = '<span class="update-no-changes">✅ Bot está atualizado!</span>';
+                pullBtn.disabled = true;
+                showToast('Bot está atualizado!', 'success');
+            }
+        } else {
+            showToast(result.error || 'Erro ao verificar atualizações', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking updates:', error);
+        showToast('Erro ao verificar atualizações', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Verificar Atualizações';
+    }
+}
+
+async function pullUpdates() {
+    if (!confirm('Tem certeza que deseja baixar as atualizações?\n\nIsso irá:\n1. Baixar código do Git\n2. Instalar dependências (npm install)\n\nRecomenda-se reiniciar o bot após a atualização.')) {
+        return;
+    }
+    
+    const btn = document.getElementById('btn-pull-updates');
+    const resultDiv = document.getElementById('update-check-result');
+    btn.disabled = true;
+    btn.textContent = '📥 Baixando e instalando...';
+    
+    resultDiv.innerHTML = '<span class="update-badge">⏳ Baixando atualizações e instalando dependências...</span>';
+    
+    try {
+        const response = await fetch('/api/updates/pull', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Atualizações baixadas e dependências instaladas! Reinicie o bot.', 'success');
+            resultDiv.innerHTML = 
+                '<span class="update-no-changes">✅ Atualizações baixadas! Reinicie o bot para aplicar.</span>';
+            loadUpdateStatus();
+        } else {
+            showToast(result.error || 'Erro ao baixar atualizações', 'error');
+            resultDiv.innerHTML = `<span style="color: #e74c3c;">❌ Erro: ${result.error || 'Falha ao atualizar'}</span>`;
+        }
+    } catch (error) {
+        console.error('Error pulling updates:', error);
+        showToast('Erro ao baixar atualizações', 'error');
+        resultDiv.innerHTML = '<span style="color: #e74c3c;">❌ Erro ao baixar atualizações</span>';
+    } finally {
+        btn.disabled = true;
+        btn.textContent = '📥 Baixar Atualizações';
+    }
+}
+
+async function restartBot() {
+    if (!confirm('⚠️ ATENÇÃO: O bot será reiniciado e ficará offline por alguns segundos. Continuar?')) {
+        return;
+    }
+    
+    const btn = document.getElementById('btn-restart-bot');
+    btn.disabled = true;
+    btn.textContent = '🔁 Reiniciando...';
+    
+    try {
+        showToast('Enviando comando de reinício...', 'info');
+        
+        const response = await fetch('/api/updates/restart', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Bot está reiniciando... A página será recarregada em 10 segundos.', 'success');
+            
+            // Reload page after a delay to let the bot restart
+            setTimeout(() => {
+                window.location.reload();
+            }, 10000);
+        } else {
+            showToast(result.error || 'Erro ao reiniciar', 'error');
+            btn.disabled = false;
+            btn.textContent = '🔁 Reiniciar Bot';
+        }
+    } catch (error) {
+        // Connection might be lost during restart, which is expected
+        showToast('Bot está reiniciando... A página será recarregada em 10 segundos.', 'success');
+        setTimeout(() => {
+            window.location.reload();
+        }, 10000);
     }
 }
 

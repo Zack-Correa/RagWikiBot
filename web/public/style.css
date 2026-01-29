@@ -1840,6 +1840,79 @@ body {
     white-space: nowrap;
 }
 
+/* Update Card */
+.update-card {
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+    border: 1px solid var(--border-color);
+}
+
+.update-card h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: var(--primary-color);
+}
+
+.update-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.update-check-result {
+    margin: 15px 0;
+    padding: 15px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    border-left: 4px solid var(--primary-color);
+}
+
+.update-badge {
+    display: inline-block;
+    padding: 5px 12px;
+    background: rgba(245, 166, 35, 0.2);
+    color: var(--primary-color);
+    border-radius: 15px;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.update-check-result pre {
+    margin: 10px 0 0 0;
+    padding: 10px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    overflow-x: auto;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.update-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+}
+
+.update-warning {
+    margin-top: 15px;
+    margin-bottom: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.update-no-changes {
+    color: #27ae60;
+    font-weight: 500;
+}
+
 /* Party Edit Modal */
 .modal-lg {
     max-width: 600px;
