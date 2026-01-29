@@ -6,6 +6,7 @@
 const express = require('express');
 const alertStorage = require('../../utils/alertStorage');
 const configStorage = require('../../utils/configStorage');
+const partyStorage = require('../../utils/partyStorage');
 const marketAlertService = require('../../services/marketAlertService');
 const deployService = require('../../services/deployService');
 const gnjoyEvents = require('../../integrations/database/gnjoy-events');
@@ -215,6 +216,83 @@ module.exports = function createApiRoutes(getDiscordClient) {
             }
         } catch (error) {
             logger.error('Error removing alert', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/alerts/:id
+     * Updates an alert by ID (admin only)
+     */
+    router.put('/alerts/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const { searchTerm, server, storeType, maxPrice, minQuantity } = req.body;
+            
+            // Validate at least one field to update
+            if (!searchTerm && !server && !storeType && maxPrice === undefined && minQuantity === undefined) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Nenhum campo para atualizar fornecido' 
+                });
+            }
+            
+            // Validate fields if provided
+            if (server && !['FREYA', 'NIDHOGG', 'YGGDRASIL'].includes(server)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Servidor inválido' 
+                });
+            }
+            
+            if (storeType && !['BUY', 'SELL'].includes(storeType)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo de transação inválido' 
+                });
+            }
+            
+            const updates = {};
+            if (searchTerm) updates.searchTerm = searchTerm.trim();
+            if (server) updates.server = server;
+            if (storeType) updates.storeType = storeType;
+            if (maxPrice !== undefined) updates.maxPrice = maxPrice ? parseInt(maxPrice, 10) : null;
+            if (minQuantity !== undefined) updates.minQuantity = minQuantity ? parseInt(minQuantity, 10) : null;
+            
+            const updatedAlert = alertStorage.updateAlert(id, updates);
+            
+            if (updatedAlert) {
+                logger.info('Alert updated by admin', { alertId: id, updates: Object.keys(updates) });
+                res.json({ 
+                    success: true, 
+                    message: 'Alerta atualizado com sucesso',
+                    data: updatedAlert
+                });
+            } else {
+                res.status(404).json({ success: false, error: 'Alerta não encontrado' });
+            }
+        } catch (error) {
+            logger.error('Error updating alert', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/alerts/:id
+     * Gets a single alert by ID
+     */
+    router.get('/alerts/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const alert = alertStorage.getAlert(id);
+            
+            if (alert) {
+                res.json({ success: true, data: alert });
+            } else {
+                res.status(404).json({ success: false, error: 'Alerta não encontrado' });
+            }
+        } catch (error) {
+            logger.error('Error getting alert', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -1237,6 +1315,214 @@ module.exports = function createApiRoutes(getDiscordClient) {
             });
         } catch (error) {
             logger.error('Error refreshing news', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PARTY/GROUP ROUTES ====================
+
+    // Class emojis for party system
+    const CLASS_EMOJIS = {
+        TANK: '🛡️',
+        DPS_MELEE: '⚔️',
+        DPS_RANGED: '🎯',
+        DPS_MAGIC: '🔮',
+        SUPPORT: '💚',
+        BARD: '🎵',
+        FLEX: '🔄'
+    };
+
+    /**
+     * GET /api/parties
+     * Returns all parties with optional filters
+     * Query params: status, guildId
+     */
+    router.get('/parties', async (req, res) => {
+        try {
+            const { status, guildId } = req.query;
+            const data = partyStorage.loadParties();
+            
+            let parties = data.parties || [];
+            
+            // Apply filters
+            if (status) {
+                parties = parties.filter(p => p.status === status);
+            }
+            if (guildId) {
+                parties = parties.filter(p => p.guildId === guildId);
+            }
+            
+            // Sort by scheduled date (newest first)
+            parties.sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+            
+            // Enrich with user info and class emojis
+            const enrichedParties = await Promise.all(parties.map(async party => {
+                const creatorInfo = await getUserInfo(getDiscordClient, party.creatorId);
+                
+                // Get guild info if available
+                let guildName = party.guildId;
+                const client = getDiscordClient();
+                if (client) {
+                    try {
+                        const guild = await client.guilds.fetch(party.guildId);
+                        guildName = guild.name;
+                    } catch (e) {
+                        // Ignore
+                    }
+                }
+                
+                // Add class emoji to each participant
+                const enrichedParticipants = party.participants.map(p => ({
+                    ...p,
+                    classEmoji: CLASS_EMOJIS[p.classType] || '👤'
+                }));
+                
+                return {
+                    ...party,
+                    participants: enrichedParticipants,
+                    creator: creatorInfo,
+                    guildName
+                };
+            }));
+            
+            // Get stats
+            const stats = partyStorage.getStats();
+            
+            res.json({
+                success: true,
+                data: {
+                    parties: enrichedParties,
+                    stats
+                }
+            });
+        } catch (error) {
+            logger.error('Error loading parties', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/parties/stats
+     * Returns party statistics
+     */
+    router.get('/parties/stats', (req, res) => {
+        try {
+            const stats = partyStorage.getStats();
+            res.json({ success: true, data: stats });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/parties/:id
+     * Cancels/removes a party (admin only)
+     */
+    router.delete('/parties/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const data = partyStorage.loadParties();
+            const partyIndex = data.parties.findIndex(p => p.id === id);
+            
+            if (partyIndex === -1) {
+                return res.status(404).json({ success: false, error: 'Grupo não encontrado' });
+            }
+            
+            const party = data.parties[partyIndex];
+            
+            // Mark as cancelled instead of deleting
+            party.status = 'cancelled';
+            partyStorage.saveParties(data);
+            
+            logger.info('Party cancelled by admin', { partyId: id });
+            
+            res.json({ 
+                success: true, 
+                message: 'Grupo cancelado com sucesso',
+                data: party
+            });
+        } catch (error) {
+            logger.error('Error cancelling party', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/parties/:id/cleanup
+     * Permanently removes a party from storage
+     */
+    router.post('/parties/:id/cleanup', (req, res) => {
+        try {
+            const { id } = req.params;
+            const data = partyStorage.loadParties();
+            const initialLength = data.parties.length;
+            
+            data.parties = data.parties.filter(p => p.id !== id);
+            
+            if (data.parties.length === initialLength) {
+                return res.status(404).json({ success: false, error: 'Grupo não encontrado' });
+            }
+            
+            partyStorage.saveParties(data);
+            logger.info('Party removed by admin', { partyId: id });
+            
+            res.json({ success: true, message: 'Grupo removido permanentemente' });
+        } catch (error) {
+            logger.error('Error removing party', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/parties/cleanup
+     * Cleans up old/cancelled parties
+     */
+    router.post('/parties/cleanup', (req, res) => {
+        try {
+            partyStorage.cleanupOldParties();
+            logger.info('Parties cleanup triggered by admin');
+            
+            res.json({ success: true, message: 'Limpeza executada' });
+        } catch (error) {
+            logger.error('Error cleaning up parties', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/parties/:partyId/participants/:userId
+     * Removes a participant from a party
+     */
+    router.delete('/parties/:partyId/participants/:userId', async (req, res) => {
+        try {
+            const { partyId, userId } = req.params;
+            
+            const result = partyStorage.leaveParty(partyId, userId);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            logger.info('Participant removed by admin', { partyId, userId });
+            
+            // Try to update the Discord message
+            try {
+                const partyService = require('../../services/partyService');
+                const party = partyStorage.getParty(partyId);
+                if (party && party.messageId) {
+                    await partyService.updatePartyMessage(party);
+                }
+            } catch (e) {
+                logger.warn('Could not update party message after removal', { error: e.message });
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Participante removido',
+                data: result.party
+            });
+        } catch (error) {
+            logger.error('Error removing participant', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });

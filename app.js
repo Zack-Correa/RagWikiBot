@@ -6,6 +6,7 @@
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const InteractionHandler = require('./handlers/interactionHandler');
 const marketAlertService = require('./services/marketAlertService');
+const partyService = require('./services/partyService');
 const webServer = require('./web/server');
 const config = require('./config');
 const logger = require('./utils/logger');
@@ -50,6 +51,10 @@ const handleReady = () => {
     marketAlertService.initialize(client);
     marketAlertService.start();
     logger.info('Market alert service started');
+
+    // Initialize party service for instance groups
+    partyService.initialize(client);
+    logger.info('Party service started');
 
     // Start admin web panel if password is configured
     const adminPort = process.env.ADMIN_PORT || 3000;
@@ -98,6 +103,7 @@ process.on('uncaughtException', (error) => {
 process.on('SIGINT', () => {
     logger.info('Received SIGINT, shutting down gracefully...');
     marketAlertService.stop();
+    partyService.shutdown();
     client.destroy();
     process.exit(0);
 });
@@ -105,6 +111,7 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
     logger.info('Received SIGTERM, shutting down gracefully...');
     marketAlertService.stop();
+    partyService.shutdown();
     client.destroy();
     process.exit(0);
 });
