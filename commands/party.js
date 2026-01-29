@@ -356,7 +356,7 @@ function parseDateTime(dateStr, timeStr) {
         if (dateParts.length < 2) return null;
         
         const day = parseInt(dateParts[0], 10);
-        const month = parseInt(dateParts[1], 10) - 1; // JS months are 0-indexed
+        const month = parseInt(dateParts[1], 10); // Keep 1-indexed for ISO string
         let year = dateParts[2] ? parseInt(dateParts[2], 10) : new Date().getFullYear();
         
         // Handle 2-digit year
@@ -376,7 +376,7 @@ function parseDateTime(dateStr, timeStr) {
             return null;
         }
         
-        if (day < 1 || day > 31 || month < 0 || month > 11) {
+        if (day < 1 || day > 31 || month < 1 || month > 12) {
             return null;
         }
         
@@ -384,12 +384,16 @@ function parseDateTime(dateStr, timeStr) {
             return null;
         }
         
-        // Create date in BRT timezone
-        const date = new Date(year, month, day, hour, minute, 0, 0);
+        // Create date string in ISO format with BRT timezone offset (UTC-3)
+        // Format: YYYY-MM-DDTHH:MM:SS-03:00
+        const isoString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00-03:00`;
         
-        // Adjust for BRT (UTC-3)
-        // Note: This assumes the server is in a different timezone
-        // The date is created in local time, which should work if the server is in BRT
+        const date = new Date(isoString);
+        
+        // Validate the date is valid
+        if (isNaN(date.getTime())) {
+            return null;
+        }
         
         return date;
         
