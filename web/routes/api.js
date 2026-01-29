@@ -1324,17 +1324,6 @@ module.exports = function createApiRoutes(getDiscordClient) {
 
     // ==================== PARTY/GROUP ROUTES ====================
 
-    // Class emojis for party system
-    const CLASS_EMOJIS = {
-        TANK: '🛡️',
-        DPS_MELEE: '⚔️',
-        DPS_RANGED: '🎯',
-        DPS_MAGIC: '🔮',
-        SUPPORT: '💚',
-        BARD: '🎵',
-        FLEX: '🔄'
-    };
-
     /**
      * GET /api/parties
      * Returns all parties with optional filters
@@ -1377,7 +1366,7 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 // Add class emoji to each participant
                 const enrichedParticipants = party.participants.map(p => ({
                     ...p,
-                    classEmoji: CLASS_EMOJIS[p.classType] || '👤'
+                    classEmoji: partyStorage.CLASSES[p.classType]?.emoji || '👤'
                 }));
                 
                 return {
@@ -1528,6 +1517,77 @@ module.exports = function createApiRoutes(getDiscordClient) {
             logger.error('Error removing participant', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
+    });
+
+    /**
+     * PUT /api/parties/:partyId/class-limits
+     * Updates class limits for a party
+     */
+    router.put('/parties/:partyId/class-limits', async (req, res) => {
+        try {
+            const { partyId } = req.params;
+            const { classLimits } = req.body;
+            
+            // Validate class limits
+            if (classLimits && typeof classLimits === 'object') {
+                for (const [classType, limit] of Object.entries(classLimits)) {
+                    if (!partyStorage.CLASSES[classType]) {
+                        return res.status(400).json({ 
+                            success: false, 
+                            error: `Classe inválida: ${classType}` 
+                        });
+                    }
+                    if (typeof limit !== 'number' || limit < 0) {
+                        return res.status(400).json({ 
+                            success: false, 
+                            error: `Limite inválido para ${classType}` 
+                        });
+                    }
+                }
+            }
+            
+            const result = partyStorage.updateClassLimits(partyId, classLimits || {});
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            logger.info('Party class limits updated by admin', { partyId });
+            
+            // Try to update the Discord message
+            try {
+                const partyService = require('../../services/partyService');
+                const party = partyStorage.getParty(partyId);
+                if (party && party.messageId) {
+                    await partyService.updatePartyMessage(party);
+                }
+            } catch (e) {
+                logger.warn('Could not update party message after class limits change', { error: e.message });
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Limites de classe atualizados',
+                data: result.party
+            });
+        } catch (error) {
+            logger.error('Error updating class limits', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/classes
+     * Returns available classes and templates
+     */
+    router.get('/classes', (req, res) => {
+        res.json({
+            success: true,
+            data: {
+                classes: partyStorage.CLASSES,
+                templates: partyStorage.INSTANCE_TEMPLATES
+            }
+        });
     });
 
     // ==================== BOT UPDATE ROUTES ====================

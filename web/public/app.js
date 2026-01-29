@@ -910,12 +910,33 @@ function renderParties(parties) {
     }).join('');
 }
 
-function openEditParty(partyId) {
+// Store classes data
+let classesData = null;
+
+async function loadClassesData() {
+    if (classesData) return classesData;
+    
+    try {
+        const response = await fetch('/api/classes');
+        const result = await response.json();
+        if (result.success) {
+            classesData = result.data;
+        }
+    } catch (error) {
+        console.error('Error loading classes:', error);
+    }
+    return classesData;
+}
+
+async function openEditParty(partyId) {
     const party = partiesData.find(p => p.id === partyId);
     if (!party) {
         showToast('Grupo não encontrado', 'error');
         return;
     }
+    
+    // Load classes if not already loaded
+    await loadClassesData();
     
     const statusText = {
         open: '🟢 Aberto',
@@ -948,8 +969,81 @@ function openEditParty(partyId) {
     document.getElementById('edit-party-max').textContent = party.maxSlots;
     
     renderPartyParticipants(party);
+    renderClassLimits(party);
     
     document.getElementById('edit-party-modal').style.display = 'flex';
+}
+
+function renderClassLimits(party) {
+    const container = document.getElementById('edit-party-class-limits');
+    
+    if (!classesData || !classesData.classes) {
+        container.innerHTML = '<p>Carregando classes...</p>';
+        return;
+    }
+    
+    const classes = classesData.classes;
+    const currentLimits = party.classLimits || {};
+    
+    // Only show main classes (not FLEX)
+    const mainClasses = Object.entries(classes).filter(([key]) => key !== 'FLEX');
+    
+    container.innerHTML = mainClasses.map(([key, info]) => {
+        const limit = currentLimits[key] !== undefined ? currentLimits[key] : '';
+        return `
+            <div class="class-limit-item">
+                <span class="class-emoji">${info.emoji}</span>
+                <span class="class-name">${info.name}</span>
+                <input type="number" min="0" max="120" 
+                    data-class="${key}" 
+                    value="${limit}" 
+                    placeholder="-">
+            </div>
+        `;
+    }).join('');
+}
+
+async function saveClassLimits() {
+    const partyId = document.getElementById('edit-party-id').value;
+    const container = document.getElementById('edit-party-class-limits');
+    const inputs = container.querySelectorAll('input[data-class]');
+    
+    const classLimits = {};
+    
+    inputs.forEach(input => {
+        const classType = input.dataset.class;
+        const value = input.value.trim();
+        
+        if (value !== '' && !isNaN(parseInt(value))) {
+            classLimits[classType] = parseInt(value);
+        }
+    });
+    
+    try {
+        const response = await fetch(`/api/parties/${partyId}/class-limits`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ classLimits })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Limites de classe salvos!', 'success');
+            await loadParties();
+            
+            // Update the modal with fresh data
+            const updatedParty = partiesData.find(p => p.id === partyId);
+            if (updatedParty) {
+                renderClassLimits(updatedParty);
+            }
+        } else {
+            showToast(result.error || 'Erro ao salvar limites', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving class limits:', error);
+        showToast('Erro ao salvar limites', 'error');
+    }
 }
 
 function renderPartyParticipants(party) {
