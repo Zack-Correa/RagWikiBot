@@ -127,11 +127,33 @@ async function runAlertCheck() {
                 });
                 
                 if (results.list && results.list.length > 0) {
-                    // Process each alert in this group
+                    // Process each alert in this group INDEPENDENTLY
+                    // Each alert has its own criteria (maxPrice, minQuantity)
                     for (const alert of group.alerts) {
-                        const sent = await processAlertResults(alert, results.list);
-                        if (sent) notificationsSent++;
+                        try {
+                            // IMPORTANT: Reload alert from storage to get fresh data
+                            // This prevents stale data issues when multiple alerts are processed
+                            const freshAlert = alertStorage.getAlert(alert.id);
+                            if (!freshAlert) {
+                                logger.warn('Alert no longer exists', { alertId: alert.id });
+                                continue;
+                            }
+                            
+                            const sent = await processAlertResults(freshAlert, results.list);
+                            if (sent) notificationsSent++;
+                        } catch (alertError) {
+                            logger.warn('Error processing individual alert', {
+                                alertId: alert.id,
+                                error: alertError.message
+                            });
+                        }
                     }
+                } else {
+                    logger.debug('No results found for group', {
+                        searchTerm: group.searchTerm,
+                        server: group.server,
+                        storeType: group.storeType
+                    });
                 }
                 
                 // Delay between requests to avoid rate limiting
@@ -165,50 +187,84 @@ async function runAlertCheck() {
 
 /**
  * Processes search results for a specific alert and sends notification if criteria match
- * @param {Object} alert - The alert object
+ * @param {Object} alert - The alert object (should be fresh from storage)
  * @param {Array} items - Market items found
  * @returns {boolean} True if notification was sent
  */
 async function processAlertResults(alert, items) {
     try {
+        logger.debug('Processing alert', {
+            alertId: alert.id,
+            userId: alert.userId,
+            searchTerm: alert.searchTerm,
+            maxPrice: alert.maxPrice,
+            minQuantity: alert.minQuantity,
+            lowestPriceSeen: alert.lowestPriceSeen,
+            totalItems: items.length
+        });
+        
         // Filter items based on alert criteria
-        let matchingItems = items;
+        let matchingItems = [...items]; // Create a copy to avoid modifying original
         
         // Filter by max price if specified
         if (alert.maxPrice) {
             matchingItems = matchingItems.filter(item => item.itemPrice <= alert.maxPrice);
+            logger.debug('After maxPrice filter', {
+                alertId: alert.id,
+                maxPrice: alert.maxPrice,
+                matchingCount: matchingItems.length
+            });
         }
         
         // Filter by min quantity if specified
         if (alert.minQuantity) {
             matchingItems = matchingItems.filter(item => item.itemCnt >= alert.minQuantity);
+            logger.debug('After minQuantity filter', {
+                alertId: alert.id,
+                minQuantity: alert.minQuantity,
+                matchingCount: matchingItems.length
+            });
         }
         
         if (matchingItems.length === 0) {
+            logger.debug('No matching items for alert', { alertId: alert.id });
             return false;
         }
         
+        // Sort by price ascending to get the lowest first
+        matchingItems.sort((a, b) => a.itemPrice - b.itemPrice);
+        
         // Find the lowest price in current results
-        const currentLowestPrice = Math.min(...matchingItems.map(item => item.itemPrice));
-        const previousLowestPrice = alert.lowestPriceSeen || alertStorage.getLowestPriceSeen(alert.id);
+        const currentLowestPrice = matchingItems[0].itemPrice;
+        
+        // Use the value directly from the alert object (which should be fresh from storage)
+        const previousLowestPrice = alert.lowestPriceSeen;
+        
+        logger.debug('Price comparison', {
+            alertId: alert.id,
+            currentLowestPrice,
+            previousLowestPrice,
+            matchingItemsCount: matchingItems.length
+        });
         
         // Check if we found a lower price than before
         const isLowerPrice = previousLowestPrice !== null && currentLowestPrice < previousLowestPrice;
         const isFirstCheck = previousLowestPrice === null;
         
-        // Always update the lowest price seen for future comparisons
+        // Always update the lowest price seen if it's lower (or first check)
         if (isFirstCheck || currentLowestPrice < previousLowestPrice) {
             alertStorage.updateLowestPrice(alert.id, currentLowestPrice);
-            logger.debug('Updated lowest price', {
+            logger.info('Updated lowest price for alert', {
                 alertId: alert.id,
                 previousLowestPrice,
-                currentLowestPrice
+                currentLowestPrice,
+                isFirstCheck
             });
         }
         
         // Check cooldown (skip cooldown if we found a lower price)
         const cooldownMs = configStorage.getCooldownMs();
-        if (!isLowerPrice && alert.lastNotified) {
+        if (!isLowerPrice && !isFirstCheck && alert.lastNotified) {
             const timeSinceNotified = Date.now() - new Date(alert.lastNotified).getTime();
             if (timeSinceNotified < cooldownMs) {
                 logger.debug('Alert in cooldown', { 
@@ -222,6 +278,7 @@ async function processAlertResults(alert, items) {
         // Send DM to user
         const sent = await sendAlertNotification(alert, matchingItems, {
             isLowerPrice,
+            isFirstCheck,
             previousLowestPrice,
             currentLowestPrice
         });
@@ -234,7 +291,8 @@ async function processAlertResults(alert, items) {
     } catch (error) {
         logger.error('Error processing alert results', { 
             alertId: alert.id, 
-            error: error.message 
+            error: error.message,
+            stack: error.stack
         });
         return false;
     }
@@ -246,6 +304,7 @@ async function processAlertResults(alert, items) {
  * @param {Array} items - Matching items
  * @param {Object} priceInfo - Price comparison info
  * @param {boolean} priceInfo.isLowerPrice - Whether a lower price was found
+ * @param {boolean} priceInfo.isFirstCheck - Whether this is the first check
  * @param {number} priceInfo.previousLowestPrice - Previous lowest price
  * @param {number} priceInfo.currentLowestPrice - Current lowest price
  * @returns {boolean} True if sent successfully
@@ -263,12 +322,16 @@ async function sendAlertNotification(alert, items, priceInfo = {}) {
         
         const storeTypeLabel = alert.storeType === 'BUY' ? 'Comprando' : 'Vendendo';
         
-        // Different title and color if price dropped
+        // Different title and color based on notification type
         let title = '🔔 Alerta de Mercado!';
         let color = '#00ff00';
         let description = `Encontramos **${items.length}** resultado(s) para seu alerta!`;
         
-        if (priceInfo.isLowerPrice) {
+        if (priceInfo.isFirstCheck) {
+            title = '🆕 Primeiro Alerta!';
+            color = '#3498db';
+            description = `Primeira verificação do seu alerta! Menor preço encontrado: **${gnjoy.formatPrice(priceInfo.currentLowestPrice)}z**`;
+        } else if (priceInfo.isLowerPrice) {
             title = '📉 Preço Mais Baixo Encontrado!';
             color = '#ffaa00';
             const priceDrop = priceInfo.previousLowestPrice - priceInfo.currentLowestPrice;

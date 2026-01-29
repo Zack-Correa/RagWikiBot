@@ -69,7 +69,7 @@ module.exports = {
                 server
             });
 
-            const { list, totalCount } = result;
+            let { list, totalCount } = result;
 
             if (!list || list.length === 0) {
                 const noResultsEmbed = createMarketEmbed({
@@ -84,6 +84,9 @@ module.exports = {
 
                 return interaction.editReply({ embeds: [noResultsEmbed] });
             }
+
+            // Sort results by price (ascending - lowest first)
+            list = list.sort((a, b) => a.itemPrice - b.itemPrice);
 
             // Format results for display
             const formattedItems = list.map((item, index) => {

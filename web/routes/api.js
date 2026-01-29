@@ -4,8 +4,12 @@
  */
 
 const express = require('express');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const alertStorage = require('../../utils/alertStorage');
 const configStorage = require('../../utils/configStorage');
+const partyStorage = require('../../utils/partyStorage');
 const marketAlertService = require('../../services/marketAlertService');
 const deployService = require('../../services/deployService');
 const gnjoyEvents = require('../../integrations/database/gnjoy-events');
@@ -215,6 +219,83 @@ module.exports = function createApiRoutes(getDiscordClient) {
             }
         } catch (error) {
             logger.error('Error removing alert', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/alerts/:id
+     * Updates an alert by ID (admin only)
+     */
+    router.put('/alerts/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const { searchTerm, server, storeType, maxPrice, minQuantity } = req.body;
+            
+            // Validate at least one field to update
+            if (!searchTerm && !server && !storeType && maxPrice === undefined && minQuantity === undefined) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Nenhum campo para atualizar fornecido' 
+                });
+            }
+            
+            // Validate fields if provided
+            if (server && !['FREYA', 'NIDHOGG', 'YGGDRASIL'].includes(server)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Servidor inválido' 
+                });
+            }
+            
+            if (storeType && !['BUY', 'SELL'].includes(storeType)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo de transação inválido' 
+                });
+            }
+            
+            const updates = {};
+            if (searchTerm) updates.searchTerm = searchTerm.trim();
+            if (server) updates.server = server;
+            if (storeType) updates.storeType = storeType;
+            if (maxPrice !== undefined) updates.maxPrice = maxPrice ? parseInt(maxPrice, 10) : null;
+            if (minQuantity !== undefined) updates.minQuantity = minQuantity ? parseInt(minQuantity, 10) : null;
+            
+            const updatedAlert = alertStorage.updateAlert(id, updates);
+            
+            if (updatedAlert) {
+                logger.info('Alert updated by admin', { alertId: id, updates: Object.keys(updates) });
+                res.json({ 
+                    success: true, 
+                    message: 'Alerta atualizado com sucesso',
+                    data: updatedAlert
+                });
+            } else {
+                res.status(404).json({ success: false, error: 'Alerta não encontrado' });
+            }
+        } catch (error) {
+            logger.error('Error updating alert', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/alerts/:id
+     * Gets a single alert by ID
+     */
+    router.get('/alerts/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const alert = alertStorage.getAlert(id);
+            
+            if (alert) {
+                res.json({ success: true, data: alert });
+            } else {
+                res.status(404).json({ success: false, error: 'Alerta não encontrado' });
+            }
+        } catch (error) {
+            logger.error('Error getting alert', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -1237,6 +1318,336 @@ module.exports = function createApiRoutes(getDiscordClient) {
             });
         } catch (error) {
             logger.error('Error refreshing news', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PARTY/GROUP ROUTES ====================
+
+    // Class emojis for party system
+    const CLASS_EMOJIS = {
+        TANK: '🛡️',
+        DPS_MELEE: '⚔️',
+        DPS_RANGED: '🎯',
+        DPS_MAGIC: '🔮',
+        SUPPORT: '💚',
+        BARD: '🎵',
+        FLEX: '🔄'
+    };
+
+    /**
+     * GET /api/parties
+     * Returns all parties with optional filters
+     * Query params: status, guildId
+     */
+    router.get('/parties', async (req, res) => {
+        try {
+            const { status, guildId } = req.query;
+            const data = partyStorage.loadParties();
+            
+            let parties = data.parties || [];
+            
+            // Apply filters
+            if (status) {
+                parties = parties.filter(p => p.status === status);
+            }
+            if (guildId) {
+                parties = parties.filter(p => p.guildId === guildId);
+            }
+            
+            // Sort by scheduled date (newest first)
+            parties.sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+            
+            // Enrich with user info and class emojis
+            const enrichedParties = await Promise.all(parties.map(async party => {
+                const creatorInfo = await getUserInfo(getDiscordClient, party.creatorId);
+                
+                // Get guild info if available
+                let guildName = party.guildId;
+                const client = getDiscordClient();
+                if (client) {
+                    try {
+                        const guild = await client.guilds.fetch(party.guildId);
+                        guildName = guild.name;
+                    } catch (e) {
+                        // Ignore
+                    }
+                }
+                
+                // Add class emoji to each participant
+                const enrichedParticipants = party.participants.map(p => ({
+                    ...p,
+                    classEmoji: CLASS_EMOJIS[p.classType] || '👤'
+                }));
+                
+                return {
+                    ...party,
+                    participants: enrichedParticipants,
+                    creator: creatorInfo,
+                    guildName
+                };
+            }));
+            
+            // Get stats
+            const stats = partyStorage.getStats();
+            
+            res.json({
+                success: true,
+                data: {
+                    parties: enrichedParties,
+                    stats
+                }
+            });
+        } catch (error) {
+            logger.error('Error loading parties', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/parties/stats
+     * Returns party statistics
+     */
+    router.get('/parties/stats', (req, res) => {
+        try {
+            const stats = partyStorage.getStats();
+            res.json({ success: true, data: stats });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/parties/:id
+     * Cancels/removes a party (admin only)
+     */
+    router.delete('/parties/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const data = partyStorage.loadParties();
+            const partyIndex = data.parties.findIndex(p => p.id === id);
+            
+            if (partyIndex === -1) {
+                return res.status(404).json({ success: false, error: 'Grupo não encontrado' });
+            }
+            
+            const party = data.parties[partyIndex];
+            
+            // Mark as cancelled instead of deleting
+            party.status = 'cancelled';
+            partyStorage.saveParties(data);
+            
+            logger.info('Party cancelled by admin', { partyId: id });
+            
+            res.json({ 
+                success: true, 
+                message: 'Grupo cancelado com sucesso',
+                data: party
+            });
+        } catch (error) {
+            logger.error('Error cancelling party', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/parties/:id/cleanup
+     * Permanently removes a party from storage
+     */
+    router.post('/parties/:id/cleanup', (req, res) => {
+        try {
+            const { id } = req.params;
+            const data = partyStorage.loadParties();
+            const initialLength = data.parties.length;
+            
+            data.parties = data.parties.filter(p => p.id !== id);
+            
+            if (data.parties.length === initialLength) {
+                return res.status(404).json({ success: false, error: 'Grupo não encontrado' });
+            }
+            
+            partyStorage.saveParties(data);
+            logger.info('Party removed by admin', { partyId: id });
+            
+            res.json({ success: true, message: 'Grupo removido permanentemente' });
+        } catch (error) {
+            logger.error('Error removing party', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/parties/cleanup
+     * Cleans up old/cancelled parties
+     */
+    router.post('/parties/cleanup', (req, res) => {
+        try {
+            partyStorage.cleanupOldParties();
+            logger.info('Parties cleanup triggered by admin');
+            
+            res.json({ success: true, message: 'Limpeza executada' });
+        } catch (error) {
+            logger.error('Error cleaning up parties', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/parties/:partyId/participants/:userId
+     * Removes a participant from a party
+     */
+    router.delete('/parties/:partyId/participants/:userId', async (req, res) => {
+        try {
+            const { partyId, userId } = req.params;
+            
+            const result = partyStorage.leaveParty(partyId, userId);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            logger.info('Participant removed by admin', { partyId, userId });
+            
+            // Try to update the Discord message
+            try {
+                const partyService = require('../../services/partyService');
+                const party = partyStorage.getParty(partyId);
+                if (party && party.messageId) {
+                    await partyService.updatePartyMessage(party);
+                }
+            } catch (e) {
+                logger.warn('Could not update party message after removal', { error: e.message });
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Participante removido',
+                data: result.party
+            });
+        } catch (error) {
+            logger.error('Error removing participant', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== BOT UPDATE ROUTES ====================
+
+    /**
+     * GET /api/updates/status
+     * Returns current git status (branch, commit)
+     */
+    router.get('/updates/status', async (req, res) => {
+        try {
+            const [branchResult, commitResult] = await Promise.all([
+                execAsync('git rev-parse --abbrev-ref HEAD'),
+                execAsync('git rev-parse HEAD')
+            ]);
+            
+            res.json({
+                success: true,
+                data: {
+                    branch: branchResult.stdout.trim(),
+                    currentCommit: commitResult.stdout.trim()
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting git status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/check
+     * Fetches from remote and checks if there are updates available
+     */
+    router.post('/updates/check', async (req, res) => {
+        try {
+            logger.info('Checking for bot updates');
+            
+            // Fetch from remote
+            await execAsync('git fetch');
+            
+            // Get current branch
+            const branchResult = await execAsync('git rev-parse --abbrev-ref HEAD');
+            const branch = branchResult.stdout.trim();
+            
+            // Check how many commits behind
+            const behindResult = await execAsync(`git rev-list HEAD..origin/${branch} --count`);
+            const commitsBehind = parseInt(behindResult.stdout.trim(), 10);
+            
+            let changes = '';
+            if (commitsBehind > 0) {
+                // Get the log of incoming commits
+                const logResult = await execAsync(`git log HEAD..origin/${branch} --oneline --no-decorate`);
+                changes = logResult.stdout.trim();
+            }
+            
+            res.json({
+                success: true,
+                data: {
+                    hasUpdates: commitsBehind > 0,
+                    commitsBehind,
+                    changes,
+                    branch
+                }
+            });
+        } catch (error) {
+            logger.error('Error checking for updates', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/pull
+     * Pulls latest changes from remote and runs npm install
+     */
+    router.post('/updates/pull', async (req, res) => {
+        try {
+            logger.info('Pulling bot updates');
+            
+            // Pull from remote
+            const pullResult = await execAsync('git pull');
+            logger.info('Git pull completed', { output: pullResult.stdout });
+            
+            // Run npm install to update dependencies
+            logger.info('Running npm install...');
+            const npmResult = await execAsync('npm install --production');
+            logger.info('npm install completed', { output: npmResult.stdout });
+            
+            res.json({
+                success: true,
+                data: {
+                    gitOutput: pullResult.stdout.trim(),
+                    npmOutput: npmResult.stdout.trim()
+                }
+            });
+        } catch (error) {
+            logger.error('Error pulling updates', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/restart
+     * Restarts the bot process
+     */
+    router.post('/updates/restart', async (req, res) => {
+        try {
+            logger.info('Bot restart requested via admin panel');
+            
+            // Send response before restarting
+            res.json({
+                success: true,
+                message: 'Bot está reiniciando...'
+            });
+            
+            // Give time for the response to be sent
+            setTimeout(() => {
+                logger.info('Restarting bot process...');
+                process.exit(0); // Exit cleanly, let process manager restart
+            }, 1000);
+        } catch (error) {
+            logger.error('Error restarting bot', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });

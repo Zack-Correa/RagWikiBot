@@ -17,6 +17,7 @@
             <a href="#dashboard" class="nav-link active" data-section="dashboard">Dashboard</a>
             <a href="#metrics" class="nav-link" data-section="metrics">Métricas</a>
             <a href="#alerts" class="nav-link" data-section="alerts">Alertas</a>
+            <a href="#parties" class="nav-link" data-section="parties">Grupos</a>
             <a href="#config" class="nav-link" data-section="config">Configurações</a>
             <a href="#whitelist" class="nav-link" data-section="whitelist">Permissões</a>
             <a href="#news" class="nav-link" data-section="news">Notícias</a>
@@ -89,6 +90,30 @@
                 <div class="server-status-actions">
                     <button class="btn btn-primary" id="btn-check-servers">Verificar Agora</button>
                 </div>
+            </div>
+            
+            <div class="update-card">
+                <h3>🔄 Atualização do Bot</h3>
+                <div class="update-status" id="update-status">
+                    <div class="update-info">
+                        <span class="info-label">Branch:</span>
+                        <span class="info-value" id="update-branch">-</span>
+                        <span class="info-label" style="margin-left: 20px;">Commit atual:</span>
+                        <span class="info-value" id="update-current-commit">-</span>
+                    </div>
+                    <div class="update-check-result" id="update-check-result" style="display: none;">
+                        <div class="update-available">
+                            <span class="update-badge">⬆️ Atualizações disponíveis</span>
+                            <pre id="update-changes"></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="update-actions">
+                    <button class="btn btn-secondary" id="btn-check-updates">🔍 Verificar Atualizações</button>
+                    <button class="btn btn-primary" id="btn-pull-updates" disabled>📥 Baixar Atualizações</button>
+                    <button class="btn btn-danger" id="btn-restart-bot">🔁 Reiniciar Bot</button>
+                </div>
+                <p class="update-warning">⚠️ Reiniciar o bot irá desconectá-lo temporariamente do Discord.</p>
             </div>
         </section>
 
@@ -240,6 +265,159 @@
                 </table>
             </div>
         </section>
+
+        <!-- Edit Alert Modal -->
+        <div id="edit-alert-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>✏️ Editar Alerta</h3>
+                    <button class="modal-close" onclick="closeEditAlert()">&times;</button>
+                </div>
+                <form id="edit-alert-form" onsubmit="saveEditAlert(event)">
+                    <input type="hidden" id="edit-alert-id">
+                    <div class="form-group">
+                        <label for="edit-alert-search">Item *</label>
+                        <input type="text" id="edit-alert-search" placeholder="Nome do item" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="edit-alert-server">Servidor</label>
+                            <select id="edit-alert-server">
+                                <option value="FREYA">Freya</option>
+                                <option value="NIDHOGG">Nidhogg</option>
+                                <option value="YGGDRASIL">Yggdrasil</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-alert-type">Tipo</label>
+                            <select id="edit-alert-type">
+                                <option value="BUY">Comprando</option>
+                                <option value="SELL">Vendendo</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="edit-alert-price">Preço Máximo</label>
+                            <input type="number" id="edit-alert-price" placeholder="Opcional" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-alert-quantity">Quantidade Mínima</label>
+                            <input type="number" id="edit-alert-quantity" placeholder="Opcional" min="1">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeEditAlert()">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Parties Section -->
+        <section id="parties" class="section">
+            <h2>Gerenciar Grupos de Instância</h2>
+            
+            <div class="parties-stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-total-parties">-</div>
+                    <div class="stat-label">Grupos Ativos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-open-parties">-</div>
+                    <div class="stat-label">Abertos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-full-parties">-</div>
+                    <div class="stat-label">Cheios</div>
+                </div>
+            </div>
+            
+            <div class="parties-toolbar">
+                <div class="toolbar-filters">
+                    <div class="filter-group">
+                        <label for="filter-party-status">Status</label>
+                        <select id="filter-party-status">
+                            <option value="">Todos</option>
+                            <option value="open">🟢 Abertos</option>
+                            <option value="full">🟡 Cheios</option>
+                            <option value="started">🔵 Iniciados</option>
+                            <option value="cancelled">🔴 Cancelados</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="btn btn-secondary" id="btn-filter-parties">
+                        <span class="btn-icon">🔍</span> Filtrar
+                    </button>
+                    <button class="btn btn-primary" id="btn-refresh-parties">
+                        <span class="btn-icon">🔄</span> Atualizar
+                    </button>
+                </div>
+            </div>
+            
+            <div class="parties-table-container">
+                <table class="parties-table">
+                    <thead>
+                        <tr>
+                            <th>Instância</th>
+                            <th>Criador</th>
+                            <th>Data/Hora</th>
+                            <th>Participantes</th>
+                            <th>Status</th>
+                            <th>Servidor</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="parties-table-body">
+                        <tr><td colspan="7" class="loading">Carregando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        
+        <!-- Edit Party Modal -->
+        <div id="edit-party-modal" class="modal" style="display: none;">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h3>✏️ Editar Grupo</h3>
+                    <button class="modal-close" onclick="closeEditParty()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="edit-party-id">
+                    
+                    <div class="party-info-header">
+                        <h4 id="edit-party-instance">-</h4>
+                        <span class="party-status-badge" id="edit-party-status">-</span>
+                    </div>
+                    
+                    <div class="party-details">
+                        <div class="detail-item">
+                            <span class="detail-label">📅 Data/Hora:</span>
+                            <span id="edit-party-datetime">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">🏠 Servidor:</span>
+                            <span id="edit-party-guild">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">👤 Criador:</span>
+                            <span id="edit-party-creator">-</span>
+                        </div>
+                    </div>
+                    
+                    <div class="participants-section">
+                        <h4>👥 Participantes (<span id="edit-party-count">0</span>/<span id="edit-party-max">12</span>)</h4>
+                        <div class="participants-list" id="edit-party-participants">
+                            <p class="no-participants">Nenhum participante</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeEditParty()">Fechar</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Config Section -->
         <section id="config" class="section">

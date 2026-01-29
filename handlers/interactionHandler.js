@@ -1,6 +1,6 @@
 /**
  * Interaction Handler
- * Handles Discord slash command interactions
+ * Handles Discord slash command interactions, buttons, and autocomplete
  */
 
 const { Collection } = require('discord.js');
@@ -8,6 +8,15 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 const metricsService = require('../services/metricsService');
+
+// Lazy load party service to avoid circular dependencies
+let partyService = null;
+function getPartyService() {
+    if (!partyService) {
+        partyService = require('../services/partyService');
+    }
+    return partyService;
+}
 
 class InteractionHandler {
     constructor() {
@@ -43,6 +52,17 @@ class InteractionHandler {
      * @param {Interaction} interaction - Discord interaction object
      */
     async handleInteraction(interaction) {
+        // Handle autocomplete
+        if (interaction.isAutocomplete()) {
+            return this._handleAutocomplete(interaction);
+        }
+        
+        // Handle buttons
+        if (interaction.isButton()) {
+            return this._handleButton(interaction);
+        }
+        
+        // Handle slash commands
         if (!interaction.isChatInputCommand()) return;
 
         const command = this.commands.get(interaction.commandName);
@@ -93,6 +113,62 @@ class InteractionHandler {
                 startTime,
                 error: hasError
             });
+        }
+    }
+
+    /**
+     * Handles autocomplete interactions
+     * @param {Interaction} interaction - Autocomplete interaction
+     * @private
+     */
+    async _handleAutocomplete(interaction) {
+        const command = this.commands.get(interaction.commandName);
+        
+        if (!command || !command.autocomplete) {
+            return;
+        }
+        
+        try {
+            await command.autocomplete(interaction);
+        } catch (error) {
+            logger.error('Error handling autocomplete', { 
+                command: interaction.commandName,
+                error: error.message 
+            });
+        }
+    }
+
+    /**
+     * Handles button interactions
+     * @param {Interaction} interaction - Button interaction
+     * @private
+     */
+    async _handleButton(interaction) {
+        const customId = interaction.customId;
+        
+        try {
+            // Handle party buttons (using : as delimiter)
+            if (customId.startsWith('party:')) {
+                const handled = await getPartyService().handlePartyButton(interaction);
+                if (handled) return;
+            }
+            
+            // Add other button handlers here as needed
+            
+            logger.debug('Unhandled button interaction', { customId });
+            
+        } catch (error) {
+            logger.error('Error handling button', { 
+                customId,
+                error: error.message 
+            });
+            
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '❌ Erro ao processar ação.',
+                    ephemeral: true 
+                }).catch(() => {});
+            }
         }
     }
 

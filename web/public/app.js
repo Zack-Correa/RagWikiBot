@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initDashboard();
     initMetrics();
     initAlerts();
+    initParties();
     initConfig();
     initWhitelist();
     initNews();
@@ -29,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load initial data
     loadStats();
     loadAlerts();
+    loadParties();
     loadConfig();
     loadWhitelist();
     loadNews();
@@ -76,9 +78,15 @@ function initDashboard() {
     document.getElementById('btn-toggle-service').addEventListener('click', toggleService);
     document.getElementById('btn-refresh').addEventListener('click', loadStats);
     document.getElementById('btn-check-servers').addEventListener('click', forceCheckServers);
+    document.getElementById('btn-check-updates').addEventListener('click', checkForUpdates);
+    document.getElementById('btn-pull-updates').addEventListener('click', pullUpdates);
+    document.getElementById('btn-restart-bot').addEventListener('click', restartBot);
     
     // Load server status on init
     loadServerStatus();
+    
+    // Load update status on init
+    loadUpdateStatus();
 }
 
 async function loadStats() {
@@ -109,7 +117,7 @@ async function loadStats() {
             
             if (data.lastCheck) {
                 const date = new Date(data.lastCheck);
-                document.getElementById('info-last-check').textContent = formatDate(date);
+                document.getElementById('info-last-check').textContent = formatTimeAgo(date);
             } else {
                 document.getElementById('info-last-check').textContent = 'Nunca';
             }
@@ -197,7 +205,7 @@ function renderServerStatus(data) {
     // Update info
     if (data.lastUpdated) {
         const lastCheck = new Date(data.lastUpdated);
-        document.getElementById('server-last-check').textContent = formatDate(lastCheck);
+        document.getElementById('server-last-check').textContent = formatTimeAgo(lastCheck);
     } else {
         document.getElementById('server-last-check').textContent = 'Nunca';
     }
@@ -226,6 +234,132 @@ async function forceCheckServers() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Verificar Agora';
+    }
+}
+
+// Bot Updates
+async function loadUpdateStatus() {
+    try {
+        const response = await fetch('/api/updates/status');
+        const result = await response.json();
+        
+        if (result.success) {
+            document.getElementById('update-branch').textContent = result.data.branch || '-';
+            document.getElementById('update-current-commit').textContent = 
+                result.data.currentCommit ? result.data.currentCommit.substring(0, 7) : '-';
+        }
+    } catch (error) {
+        console.error('Error loading update status:', error);
+    }
+}
+
+async function checkForUpdates() {
+    const btn = document.getElementById('btn-check-updates');
+    const pullBtn = document.getElementById('btn-pull-updates');
+    const resultDiv = document.getElementById('update-check-result');
+    const changesEl = document.getElementById('update-changes');
+    
+    btn.disabled = true;
+    btn.textContent = '🔍 Verificando...';
+    
+    try {
+        const response = await fetch('/api/updates/check', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            if (result.data.hasUpdates) {
+                resultDiv.style.display = 'block';
+                resultDiv.querySelector('.update-available span').textContent = 
+                    `⬆️ ${result.data.commitsBehind} commit(s) disponíveis`;
+                changesEl.textContent = result.data.changes || 'Atualizações disponíveis';
+                pullBtn.disabled = false;
+                showToast('Atualizações encontradas!', 'success');
+            } else {
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = '<span class="update-no-changes">✅ Bot está atualizado!</span>';
+                pullBtn.disabled = true;
+                showToast('Bot está atualizado!', 'success');
+            }
+        } else {
+            showToast(result.error || 'Erro ao verificar atualizações', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking updates:', error);
+        showToast('Erro ao verificar atualizações', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Verificar Atualizações';
+    }
+}
+
+async function pullUpdates() {
+    if (!confirm('Tem certeza que deseja baixar as atualizações?\n\nIsso irá:\n1. Baixar código do Git\n2. Instalar dependências (npm install)\n\nRecomenda-se reiniciar o bot após a atualização.')) {
+        return;
+    }
+    
+    const btn = document.getElementById('btn-pull-updates');
+    const resultDiv = document.getElementById('update-check-result');
+    btn.disabled = true;
+    btn.textContent = '📥 Baixando e instalando...';
+    
+    resultDiv.innerHTML = '<span class="update-badge">⏳ Baixando atualizações e instalando dependências...</span>';
+    
+    try {
+        const response = await fetch('/api/updates/pull', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Atualizações baixadas e dependências instaladas! Reinicie o bot.', 'success');
+            resultDiv.innerHTML = 
+                '<span class="update-no-changes">✅ Atualizações baixadas! Reinicie o bot para aplicar.</span>';
+            loadUpdateStatus();
+        } else {
+            showToast(result.error || 'Erro ao baixar atualizações', 'error');
+            resultDiv.innerHTML = `<span style="color: #e74c3c;">❌ Erro: ${result.error || 'Falha ao atualizar'}</span>`;
+        }
+    } catch (error) {
+        console.error('Error pulling updates:', error);
+        showToast('Erro ao baixar atualizações', 'error');
+        resultDiv.innerHTML = '<span style="color: #e74c3c;">❌ Erro ao baixar atualizações</span>';
+    } finally {
+        btn.disabled = true;
+        btn.textContent = '📥 Baixar Atualizações';
+    }
+}
+
+async function restartBot() {
+    if (!confirm('⚠️ ATENÇÃO: O bot será reiniciado e ficará offline por alguns segundos. Continuar?')) {
+        return;
+    }
+    
+    const btn = document.getElementById('btn-restart-bot');
+    btn.disabled = true;
+    btn.textContent = '🔁 Reiniciando...';
+    
+    try {
+        showToast('Enviando comando de reinício...', 'info');
+        
+        const response = await fetch('/api/updates/restart', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Bot está reiniciando... A página será recarregada em 10 segundos.', 'success');
+            
+            // Reload page after a delay to let the bot restart
+            setTimeout(() => {
+                window.location.reload();
+            }, 10000);
+        } else {
+            showToast(result.error || 'Erro ao reiniciar', 'error');
+            btn.disabled = false;
+            btn.textContent = '🔁 Reiniciar Bot';
+        }
+    } catch (error) {
+        // Connection might be lost during restart, which is expected
+        showToast('Bot está reiniciando... A página será recarregada em 10 segundos.', 'success');
+        setTimeout(() => {
+            window.location.reload();
+        }, 10000);
     }
 }
 
@@ -531,11 +665,14 @@ function renderAlerts(alerts) {
         return;
     }
     
+    // Store alerts for edit modal
+    window.alertsData = alerts;
+    
     tbody.innerHTML = alerts.map(alert => {
         const typeLabel = alert.storeType === 'BUY' ? 'Comprando' : 'Vendendo';
         const maxPrice = alert.maxPrice ? formatPrice(alert.maxPrice) : '-';
         const lowestPrice = alert.lowestPriceSeen ? formatPrice(alert.lowestPriceSeen) : '-';
-        const createdAt = formatDate(new Date(alert.createdAt));
+        const createdAt = formatDateShort(new Date(alert.createdAt));
         
         // User info
         const user = alert.user || { displayName: alert.userId, avatar: null };
@@ -556,9 +693,12 @@ function renderAlerts(alerts) {
                 <td>${lowestPrice}</td>
                 <td>${alert.notificationCount || 0}</td>
                 <td>${createdAt}</td>
-                <td>
-                    <button class="btn btn-danger btn-sm" onclick="deleteAlert('${alert.id}')">
-                        Remover
+                <td class="actions-cell">
+                    <button class="btn btn-primary btn-sm" onclick="openEditAlert('${alert.id}')" title="Editar">
+                        ✏️
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteAlert('${alert.id}')" title="Remover">
+                        🗑️
                     </button>
                 </td>
             </tr>
@@ -584,6 +724,345 @@ async function deleteAlert(alertId) {
         }
     } catch (error) {
         showToast('Erro ao remover alerta', 'error');
+    }
+}
+
+// Edit Alert Modal
+function openEditAlert(alertId) {
+    const alert = window.alertsData?.find(a => a.id === alertId);
+    if (!alert) {
+        showToast('Alerta não encontrado', 'error');
+        return;
+    }
+    
+    // Fill form with current values
+    document.getElementById('edit-alert-id').value = alert.id;
+    document.getElementById('edit-alert-search').value = alert.searchTerm;
+    document.getElementById('edit-alert-server').value = alert.server;
+    document.getElementById('edit-alert-type').value = alert.storeType;
+    document.getElementById('edit-alert-price').value = alert.maxPrice || '';
+    document.getElementById('edit-alert-quantity').value = alert.minQuantity || '';
+    
+    // Show modal
+    document.getElementById('edit-alert-modal').classList.add('active');
+}
+
+function closeEditAlert() {
+    document.getElementById('edit-alert-modal').classList.remove('active');
+}
+
+async function saveEditAlert(e) {
+    e.preventDefault();
+    
+    const alertId = document.getElementById('edit-alert-id').value;
+    const searchTerm = document.getElementById('edit-alert-search').value.trim();
+    const server = document.getElementById('edit-alert-server').value;
+    const storeType = document.getElementById('edit-alert-type').value;
+    const maxPrice = document.getElementById('edit-alert-price').value;
+    const minQuantity = document.getElementById('edit-alert-quantity').value;
+    
+    if (!searchTerm) {
+        showToast('O termo de busca é obrigatório', 'error');
+        return;
+    }
+    
+    const submitBtn = document.querySelector('#edit-alert-form button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Salvando...';
+    
+    try {
+        const response = await fetch(`/api/alerts/${alertId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                searchTerm,
+                server,
+                storeType,
+                maxPrice: maxPrice ? parseInt(maxPrice, 10) : null,
+                minQuantity: minQuantity ? parseInt(minQuantity, 10) : null
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Alerta atualizado com sucesso!', 'success');
+            closeEditAlert();
+            loadAlerts();
+        } else {
+            showToast(result.error || 'Erro ao atualizar alerta', 'error');
+        }
+    } catch (error) {
+        console.error('Error updating alert:', error);
+        showToast('Erro ao atualizar alerta', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Salvar';
+    }
+}
+
+// Parties/Groups
+let partiesData = [];
+
+function initParties() {
+    document.getElementById('btn-filter-parties').addEventListener('click', loadParties);
+    document.getElementById('btn-refresh-parties').addEventListener('click', refreshParties);
+}
+
+async function refreshParties() {
+    const btn = document.getElementById('btn-refresh-parties');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-icon">⏳</span> Atualizando...';
+    
+    await loadParties();
+    
+    btn.disabled = false;
+    btn.innerHTML = '<span class="btn-icon">🔄</span> Atualizar';
+    showToast('Lista de grupos atualizada!', 'success');
+}
+
+async function loadParties() {
+    const status = document.getElementById('filter-party-status').value;
+    
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    
+    try {
+        const response = await fetch(`/api/parties?${params}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            partiesData = result.data.parties;
+            renderParties(result.data.parties);
+            updatePartyStats(result.data.stats);
+        }
+    } catch (error) {
+        console.error('Error loading parties:', error);
+        showToast('Erro ao carregar grupos', 'error');
+    }
+}
+
+function updatePartyStats(stats) {
+    document.getElementById('stat-total-parties').textContent = stats.active || 0;
+    document.getElementById('stat-open-parties').textContent = stats.open || 0;
+    document.getElementById('stat-full-parties').textContent = stats.full || 0;
+}
+
+function renderParties(parties) {
+    const tbody = document.getElementById('parties-table-body');
+    
+    if (parties.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">Nenhum grupo encontrado</td></tr>';
+        return;
+    }
+    
+    const statusEmoji = {
+        open: '🟢',
+        full: '🟡',
+        started: '🔵',
+        cancelled: '🔴',
+        completed: '⚫'
+    };
+    
+    const statusText = {
+        open: 'Aberto',
+        full: 'Cheio',
+        started: 'Iniciado',
+        cancelled: 'Cancelado',
+        completed: 'Finalizado'
+    };
+    
+    tbody.innerHTML = parties.map(party => {
+        const scheduledAt = new Date(party.scheduledAt);
+        const scheduledStr = formatDateShort(scheduledAt);
+        
+        const creator = party.creator || { displayName: party.creatorId, avatar: null };
+        const avatarHtml = creator.avatar 
+            ? `<img src="${creator.avatar}" alt="${escapeHtml(creator.displayName)}" class="user-avatar">`
+            : `<div class="user-avatar-placeholder">${escapeHtml(creator.displayName.charAt(0).toUpperCase())}</div>`;
+        
+        const participantsList = party.participants.length > 0
+            ? party.participants.map(p => `${p.userName} (${p.className})`).join(', ')
+            : 'Nenhum';
+        
+        const canEdit = party.status === 'open' || party.status === 'full';
+        const canCancel = party.status === 'open' || party.status === 'full';
+        const canDelete = party.status === 'cancelled' || party.status === 'started' || party.status === 'completed';
+        
+        return `
+            <tr>
+                <td><strong>${escapeHtml(party.instanceName)}</strong></td>
+                <td class="user-cell">
+                    ${avatarHtml}
+                    <span class="user-name">${escapeHtml(creator.displayName)}</span>
+                </td>
+                <td>${scheduledStr}</td>
+                <td title="${escapeHtml(participantsList)}">${party.participants.length}/${party.maxSlots}</td>
+                <td>${statusEmoji[party.status] || '❓'} ${statusText[party.status] || party.status}</td>
+                <td>${escapeHtml(party.guildName || party.guildId)}</td>
+                <td class="actions-cell">
+                    ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openEditParty('${party.id}')" title="Editar">✏️</button>` : ''}
+                    ${canCancel ? `<button class="btn btn-warning btn-sm" onclick="cancelParty('${party.id}')" title="Cancelar">❌</button>` : ''}
+                    ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteParty('${party.id}')" title="Remover">🗑️</button>` : ''}
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function openEditParty(partyId) {
+    const party = partiesData.find(p => p.id === partyId);
+    if (!party) {
+        showToast('Grupo não encontrado', 'error');
+        return;
+    }
+    
+    const statusText = {
+        open: '🟢 Aberto',
+        full: '🟡 Cheio',
+        started: '🔵 Iniciado',
+        cancelled: '🔴 Cancelado'
+    };
+    
+    const statusClass = {
+        open: 'status-open',
+        full: 'status-full',
+        started: 'status-started',
+        cancelled: 'status-cancelled'
+    };
+    
+    document.getElementById('edit-party-id').value = party.id;
+    document.getElementById('edit-party-instance').textContent = party.instanceName;
+    
+    const statusBadge = document.getElementById('edit-party-status');
+    statusBadge.textContent = statusText[party.status] || party.status;
+    statusBadge.className = `party-status-badge ${statusClass[party.status] || ''}`;
+    
+    document.getElementById('edit-party-datetime').textContent = formatDate(new Date(party.scheduledAt));
+    document.getElementById('edit-party-guild').textContent = party.guildName || party.guildId;
+    
+    const creator = party.creator || { displayName: party.creatorId };
+    document.getElementById('edit-party-creator').textContent = creator.displayName;
+    
+    document.getElementById('edit-party-count').textContent = party.participants.length;
+    document.getElementById('edit-party-max').textContent = party.maxSlots;
+    
+    renderPartyParticipants(party);
+    
+    document.getElementById('edit-party-modal').style.display = 'flex';
+}
+
+function renderPartyParticipants(party) {
+    const container = document.getElementById('edit-party-participants');
+    
+    if (party.participants.length === 0) {
+        container.innerHTML = '<p class="no-participants">Nenhum participante</p>';
+        return;
+    }
+    
+    const canRemove = party.status === 'open' || party.status === 'full';
+    
+    container.innerHTML = party.participants.map(p => `
+        <div class="participant-item">
+            <div class="participant-info">
+                <span class="participant-class">${p.classEmoji || '👤'}</span>
+                <div>
+                    <div class="participant-name">${escapeHtml(p.userName)}</div>
+                    <div class="participant-class-name">${escapeHtml(p.className)}</div>
+                </div>
+            </div>
+            ${canRemove ? `
+                <div class="participant-actions">
+                    <button class="btn btn-danger btn-sm" onclick="removeParticipant('${party.id}', '${p.userId}')">Remover</button>
+                </div>
+            ` : ''}
+        </div>
+    `).join('');
+}
+
+function closeEditParty() {
+    document.getElementById('edit-party-modal').style.display = 'none';
+}
+
+async function removeParticipant(partyId, userId) {
+    if (!confirm('Tem certeza que deseja remover este participante?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/parties/${partyId}/participants/${userId}`, {
+            method: 'DELETE'
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Participante removido!', 'success');
+            await loadParties();
+            
+            // Reopen the modal with updated data
+            const updatedParty = partiesData.find(p => p.id === partyId);
+            if (updatedParty) {
+                document.getElementById('edit-party-count').textContent = updatedParty.participants.length;
+                renderPartyParticipants(updatedParty);
+                
+                // Update status badge if needed
+                const statusText = {
+                    open: '🟢 Aberto',
+                    full: '🟡 Cheio'
+                };
+                const statusClass = {
+                    open: 'status-open',
+                    full: 'status-full'
+                };
+                const statusBadge = document.getElementById('edit-party-status');
+                statusBadge.textContent = statusText[updatedParty.status] || updatedParty.status;
+                statusBadge.className = `party-status-badge ${statusClass[updatedParty.status] || ''}`;
+            }
+        } else {
+            showToast(result.error || 'Erro ao remover participante', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao remover participante', 'error');
+    }
+}
+
+async function cancelParty(partyId) {
+    if (!confirm('Tem certeza que deseja cancelar este grupo? Os participantes serão notificados.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/parties/${partyId}`, { method: 'DELETE' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Grupo cancelado!', 'success');
+            loadParties();
+        } else {
+            showToast(result.error || 'Erro ao cancelar grupo', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao cancelar grupo', 'error');
+    }
+}
+
+async function deleteParty(partyId) {
+    if (!confirm('Tem certeza que deseja remover permanentemente este grupo?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/parties/${partyId}/cleanup`, { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Grupo removido!', 'success');
+            loadParties();
+        } else {
+            showToast(result.error || 'Erro ao remover grupo', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao remover grupo', 'error');
     }
 }
 
@@ -984,7 +1463,7 @@ async function loadNews() {
             
             if (data.cache.lastRefresh) {
                 const lastRefresh = new Date(data.cache.lastRefresh);
-                document.getElementById('news-last-refresh').textContent = formatDate(lastRefresh);
+                document.getElementById('news-last-refresh').textContent = formatTimeAgo(lastRefresh);
             } else {
                 document.getElementById('news-last-refresh').textContent = 'Nunca';
             }
@@ -1340,22 +1819,81 @@ async function clearGuildCommands(guildId) {
 }
 
 // Utility Functions
-function formatDate(date) {
-    return date.toLocaleString('pt-BR', {
+
+// Default timezone (BRT - Brasília Time)
+const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
+
+// Get user's timezone or default to BRT
+function getUserTimezone() {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TIMEZONE;
+    } catch {
+        return DEFAULT_TIMEZONE;
+    }
+}
+
+function formatDate(date, options = {}) {
+    const timezone = getUserTimezone();
+    const showTimezone = options.showTimezone !== false;
+    
+    const formatted = date.toLocaleString('pt-BR', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        timeZone: timezone
+    });
+    
+    if (showTimezone) {
+        // Get short timezone name
+        const tzName = date.toLocaleString('pt-BR', {
+            timeZone: timezone,
+            timeZoneName: 'short'
+        }).split(' ').pop();
+        
+        return `${formatted} (${tzName})`;
+    }
+    
+    return formatted;
+}
+
+function formatDateShort(date) {
+    const timezone = getUserTimezone();
+    
+    return date.toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: timezone
     });
 }
 
 function formatTime(date) {
+    const timezone = getUserTimezone();
+    
     return date.toLocaleString('pt-BR', {
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit'
+        second: '2-digit',
+        timeZone: timezone
     });
+}
+
+function formatTimeAgo(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'agora';
+    if (diffMins < 60) return `há ${diffMins} min`;
+    if (diffHours < 24) return `há ${diffHours}h`;
+    if (diffDays < 7) return `há ${diffDays} dia${diffDays > 1 ? 's' : ''}`;
+    
+    return formatDateShort(date);
 }
 
 function formatPrice(price) {

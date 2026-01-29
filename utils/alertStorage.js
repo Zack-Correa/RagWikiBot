@@ -129,6 +129,70 @@ function removeAlert(alertId, userId) {
 }
 
 /**
+ * Updates an existing alert
+ * @param {string} alertId - Alert ID
+ * @param {Object} updates - Fields to update
+ * @param {string} [updates.searchTerm] - New search term
+ * @param {string} [updates.storeType] - New store type (BUY/SELL)
+ * @param {string} [updates.server] - New server
+ * @param {number|null} [updates.maxPrice] - New max price
+ * @param {number|null} [updates.minQuantity] - New min quantity
+ * @returns {Object|null} Updated alert or null if not found
+ */
+function updateAlert(alertId, updates) {
+    const data = loadAlerts();
+    const alertIndex = data.alerts.findIndex(a => a.id === alertId);
+    
+    if (alertIndex === -1) {
+        return null;
+    }
+    
+    const alert = data.alerts[alertIndex];
+    
+    // Update allowed fields
+    if (updates.searchTerm !== undefined) {
+        alert.searchTerm = updates.searchTerm;
+    }
+    if (updates.storeType !== undefined) {
+        alert.storeType = updates.storeType;
+    }
+    if (updates.server !== undefined) {
+        alert.server = updates.server;
+    }
+    if (updates.maxPrice !== undefined) {
+        alert.maxPrice = updates.maxPrice || null;
+    }
+    if (updates.minQuantity !== undefined) {
+        alert.minQuantity = updates.minQuantity || null;
+    }
+    
+    // Reset notification tracking if search criteria changed
+    if (updates.searchTerm || updates.storeType || updates.server) {
+        alert.lowestPriceSeen = null;
+        alert.lastNotified = null;
+    }
+    
+    alert.updatedAt = new Date().toISOString();
+    
+    data.alerts[alertIndex] = alert;
+    saveAlerts(data);
+    
+    logger.info('Alert updated', { alertId, updates: Object.keys(updates) });
+    
+    return alert;
+}
+
+/**
+ * Gets an alert by ID
+ * @param {string} alertId - Alert ID
+ * @returns {Object|null} Alert or null if not found
+ */
+function getAlert(alertId) {
+    const data = loadAlerts();
+    return data.alerts.find(a => a.id === alertId) || null;
+}
+
+/**
  * Gets all alerts for a user
  * @param {string} userId - Discord user ID
  * @returns {Array} User's alerts
@@ -264,6 +328,8 @@ module.exports = {
     saveAlerts,
     addAlert,
     removeAlert,
+    updateAlert,
+    getAlert,
     getUserAlerts,
     getGroupedAlerts,
     updateAlertNotified,
