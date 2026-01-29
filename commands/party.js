@@ -80,9 +80,9 @@ module.exports = {
                         .setRequired(true))
                 .addIntegerOption(option =>
                     option.setName('vagas')
-                        .setDescription('Número máximo de vagas (padrão: 12)')
+                        .setDescription('Número máximo de vagas (padrão: 12, máx: 120)')
                         .setMinValue(2)
-                        .setMaxValue(24))
+                        .setMaxValue(120))
                 .addStringOption(option =>
                     option.setName('descricao')
                         .setDescription('Descrição adicional (requisitos, etc.)'))

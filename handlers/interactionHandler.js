@@ -62,6 +62,16 @@ class InteractionHandler {
             return this._handleButton(interaction);
         }
         
+        // Handle select menus
+        if (interaction.isStringSelectMenu()) {
+            return this._handleSelectMenu(interaction);
+        }
+        
+        // Handle modal submissions
+        if (interaction.isModalSubmit()) {
+            return this._handleModal(interaction);
+        }
+        
         // Handle slash commands
         if (!interaction.isChatInputCommand()) return;
 
@@ -166,6 +176,74 @@ class InteractionHandler {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({ 
                     content: '❌ Erro ao processar ação.',
+                    ephemeral: true 
+                }).catch(() => {});
+            }
+        }
+    }
+
+    /**
+     * Handles select menu interactions
+     * @param {Interaction} interaction - Select menu interaction
+     * @private
+     */
+    async _handleSelectMenu(interaction) {
+        const customId = interaction.customId;
+        
+        try {
+            // Handle party select menus (using : as delimiter)
+            if (customId.startsWith('party:')) {
+                const handled = await getPartyService().handlePartyButton(interaction);
+                if (handled) return;
+            }
+            
+            // Add other select menu handlers here as needed
+            
+            logger.debug('Unhandled select menu interaction', { customId });
+            
+        } catch (error) {
+            logger.error('Error handling select menu', { 
+                customId,
+                error: error.message 
+            });
+            
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '❌ Erro ao processar seleção.',
+                    ephemeral: true 
+                }).catch(() => {});
+            }
+        }
+    }
+
+    /**
+     * Handles modal submission interactions
+     * @param {Interaction} interaction - Modal submit interaction
+     * @private
+     */
+    async _handleModal(interaction) {
+        const customId = interaction.customId;
+        
+        try {
+            // Handle party modals
+            if (customId.startsWith('party:modal:')) {
+                const handled = await getPartyService().handleModalSubmit(interaction);
+                if (handled) return;
+            }
+            
+            // Add other modal handlers here as needed
+            
+            logger.debug('Unhandled modal interaction', { customId });
+            
+        } catch (error) {
+            logger.error('Error handling modal', { 
+                customId,
+                error: error.message 
+            });
+            
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '❌ Erro ao processar formulário.',
                     ephemeral: true 
                 }).catch(() => {});
             }

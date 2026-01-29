@@ -412,6 +412,15 @@
                             <p class="no-participants">Nenhum participante</p>
                         </div>
                     </div>
+                    
+                    <div class="class-limits-section">
+                        <h4>📊 Limites por Classe</h4>
+                        <p class="section-hint">Defina limites para cada classe. Deixe vazio para não limitar.</p>
+                        <div class="class-limits-grid" id="edit-party-class-limits">
+                            <!-- Dynamically populated -->
+                        </div>
+                        <button class="btn btn-primary" id="btn-save-class-limits" onclick="saveClassLimits()">💾 Salvar Limites</button>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="closeEditParty()">Fechar</button>
