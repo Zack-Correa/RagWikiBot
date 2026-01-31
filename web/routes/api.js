@@ -2833,5 +2833,322 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    // ==================== AGENTFORCE API ENDPOINTS ====================
+    // These endpoints are called by Salesforce Agentforce to execute actions
+    
+    /**
+     * Middleware to validate Agentforce API key
+     */
+    const validateAgentforceKey = (req, res, next) => {
+        const apiKey = req.headers['x-api-key'] || req.query.apiKey;
+        const expectedKey = process.env.AGENTFORCE_API_KEY;
+        
+        // If no API key is configured, allow all requests (development mode)
+        if (!expectedKey) {
+            return next();
+        }
+        
+        if (!apiKey || apiKey !== expectedKey) {
+            return res.status(401).json({ 
+                success: false, 
+                error: 'Invalid or missing API key' 
+            });
+        }
+        
+        next();
+    };
+
+    /**
+     * POST /api/agentforce/search/item
+     * Search for items in Divine Pride database
+     */
+    router.post('/agentforce/search/item', validateAgentforceKey, async (req, res) => {
+        try {
+            const { query, language = 'pt' } = req.body;
+            
+            if (!query) {
+                return res.status(400).json({ success: false, error: 'Query is required' });
+            }
+            
+            const divinePride = require('../../integrations/database/divine-pride');
+            let result;
+            
+            // Check if it's a numeric ID
+            if (/^\d+$/.test(query)) {
+                result = await divinePride.cached.makeItemIdRequest(query, language);
+                result = { items: [result], single: true };
+            } else {
+                const items = await divinePride.cached.makeSearchQuery(query, language);
+                result = { items: items || [], single: false };
+            }
+            
+            logger.debug('Agentforce item search', { query, resultsCount: result.items?.length });
+            
+            res.json({
+                success: true,
+                type: 'item',
+                data: result
+            });
+        } catch (error) {
+            logger.error('Agentforce item search error', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/agentforce/search/monster
+     * Search for monsters in Divine Pride database
+     */
+    router.post('/agentforce/search/monster', validateAgentforceKey, async (req, res) => {
+        try {
+            const { query, language = 'pt' } = req.body;
+            
+            if (!query) {
+                return res.status(400).json({ success: false, error: 'Query is required' });
+            }
+            
+            const divinePride = require('../../integrations/database/divine-pride');
+            let result;
+            
+            // Check if it's a numeric ID
+            if (/^\d+$/.test(query)) {
+                result = await divinePride.cached.monsterSearch(query, language);
+                result = { monsters: [result], single: true };
+            } else {
+                const monsters = await divinePride.cached.makeMonsterSearchQuery(query, language);
+                result = { monsters: monsters || [], single: false };
+            }
+            
+            logger.debug('Agentforce monster search', { query, resultsCount: result.monsters?.length });
+            
+            res.json({
+                success: true,
+                type: 'monster',
+                data: result
+            });
+        } catch (error) {
+            logger.error('Agentforce monster search error', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/agentforce/search/map
+     * Search for maps in Divine Pride database
+     */
+    router.post('/agentforce/search/map', validateAgentforceKey, async (req, res) => {
+        try {
+            const { query, language = 'pt' } = req.body;
+            
+            if (!query) {
+                return res.status(400).json({ success: false, error: 'Query is required' });
+            }
+            
+            const divinePride = require('../../integrations/database/divine-pride');
+            let result;
+            
+            // Check if it's a map ID format
+            if (/^[a-z_]+\d*$/i.test(query)) {
+                result = await divinePride.cached.mapSearch(query, language);
+                result = { maps: [result], single: true };
+            } else {
+                const maps = await divinePride.cached.makeMapSearchQuery(query, language);
+                result = { maps: maps || [], single: false };
+            }
+            
+            logger.debug('Agentforce map search', { query, resultsCount: result.maps?.length });
+            
+            res.json({
+                success: true,
+                type: 'map',
+                data: result
+            });
+        } catch (error) {
+            logger.error('Agentforce map search error', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/agentforce/search/market
+     * Search for items in GNJoy market
+     */
+    router.post('/agentforce/search/market', validateAgentforceKey, async (req, res) => {
+        try {
+            const { query, server = 'FREYA', type = 'SELL' } = req.body;
+            
+            if (!query) {
+                return res.status(400).json({ success: false, error: 'Query is required' });
+            }
+            
+            const gnjoy = require('../../integrations/database/gnjoy');
+            const result = await gnjoy.cached.searchMarket(query, {
+                server: server.toUpperCase(),
+                storeType: type.toUpperCase()
+            });
+            
+            logger.debug('Agentforce market search', { query, server, resultsCount: result?.list?.length });
+            
+            res.json({
+                success: true,
+                type: 'market',
+                data: {
+                    listings: result?.list || [],
+                    server: server.toUpperCase(),
+                    storeType: type.toUpperCase()
+                }
+            });
+        } catch (error) {
+            logger.error('Agentforce market search error', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/agentforce/search/wiki
+     * Search in Browiki
+     */
+    router.post('/agentforce/search/wiki', validateAgentforceKey, async (req, res) => {
+        try {
+            const { query } = req.body;
+            
+            if (!query) {
+                return res.status(400).json({ success: false, error: 'Query is required' });
+            }
+            
+            const wiki = require('../../integrations/wikis/wikiRequests');
+            const result = await wiki.cached.makeRequest(query);
+            
+            const articles = result?.query?.search || [];
+            
+            logger.debug('Agentforce wiki search', { query, resultsCount: articles.length });
+            
+            res.json({
+                success: true,
+                type: 'wiki',
+                data: {
+                    articles: articles.map(a => ({
+                        title: a.title,
+                        snippet: a.snippet?.replace(/<[^>]*>/g, ''),
+                        url: `https://browiki.org/wiki/${encodeURIComponent(a.title.replace(/ /g, '_'))}`
+                    }))
+                }
+            });
+        } catch (error) {
+            logger.error('Agentforce wiki search error', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/agentforce/check/price
+     * Analyze if a price is fair
+     */
+    router.post('/agentforce/check/price', validateAgentforceKey, async (req, res) => {
+        try {
+            const { item, price, server = 'FREYA' } = req.body;
+            
+            if (!item) {
+                return res.status(400).json({ success: false, error: 'Item name is required' });
+            }
+            
+            const gnjoy = require('../../integrations/database/gnjoy');
+            const marketResult = await gnjoy.cached.searchMarket(item, {
+                server: server.toUpperCase(),
+                storeType: 'SELL'
+            });
+            
+            const listings = marketResult?.list || [];
+            
+            if (listings.length === 0) {
+                return res.json({
+                    success: true,
+                    type: 'price',
+                    data: {
+                        item,
+                        error: 'Item not found in market',
+                        found: false
+                    }
+                });
+            }
+            
+            const prices = listings.map(l => l.price).sort((a, b) => a - b);
+            const minPrice = prices[0];
+            const maxPrice = prices[prices.length - 1];
+            const avgPrice = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+            const medianPrice = prices[Math.floor(prices.length / 2)];
+            
+            let analysis = 'fair';
+            let percentFromMedian = 0;
+            
+            if (price) {
+                percentFromMedian = ((price - medianPrice) / medianPrice * 100).toFixed(1);
+                
+                if (price < minPrice * 0.8) {
+                    analysis = 'very_cheap';
+                } else if (price < medianPrice * 0.9) {
+                    analysis = 'cheap';
+                } else if (price > maxPrice * 1.2) {
+                    analysis = 'very_expensive';
+                } else if (price > medianPrice * 1.1) {
+                    analysis = 'expensive';
+                }
+            }
+            
+            logger.debug('Agentforce price check', { item, price, analysis });
+            
+            res.json({
+                success: true,
+                type: 'price',
+                data: {
+                    item: listings[0].itemName || item,
+                    itemId: listings[0].itemId,
+                    server: server.toUpperCase(),
+                    inputPrice: price,
+                    analysis,
+                    analysisText: {
+                        very_cheap: 'Muito Barato',
+                        cheap: 'Barato',
+                        fair: 'Preço Justo',
+                        expensive: 'Caro',
+                        very_expensive: 'Muito Caro'
+                    }[analysis],
+                    percentFromMedian: parseFloat(percentFromMedian),
+                    stats: {
+                        min: minPrice,
+                        max: maxPrice,
+                        avg: avgPrice,
+                        median: medianPrice,
+                        count: listings.length
+                    },
+                    found: true
+                }
+            });
+        } catch (error) {
+            logger.error('Agentforce price check error', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/agentforce/health
+     * Health check for Agentforce integration
+     */
+    router.get('/agentforce/health', (req, res) => {
+        res.json({
+            success: true,
+            service: 'RagWikiBot Agentforce API',
+            version: '1.0.0',
+            endpoints: [
+                'POST /api/agentforce/search/item',
+                'POST /api/agentforce/search/monster',
+                'POST /api/agentforce/search/map',
+                'POST /api/agentforce/search/market',
+                'POST /api/agentforce/search/wiki',
+                'POST /api/agentforce/check/price'
+            ]
+        });
+    });
+
     return router;
 };
