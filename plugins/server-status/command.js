@@ -4,9 +4,8 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const serverStatusService = require('../services/serverStatusService');
-const serverStatusStorage = require('../utils/serverStatusStorage');
-const logger = require('../utils/logger');
+const service = require('./service');
+const logger = require('../../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,7 +16,7 @@ module.exports = {
         await interaction.deferReply();
         
         try {
-            const status = serverStatusService.getStatus();
+            const status = service.getStatus();
             const servers = status.servers;
             
             // Determine overall status

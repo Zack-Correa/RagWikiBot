@@ -4,8 +4,8 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const gnjoyEvents = require('../integrations/database/gnjoy-events');
-const logger = require('../utils/logger');
+const gnjoyEvents = require('../../integrations/database/gnjoy-events');
+const logger = require('../../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()

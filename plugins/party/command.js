@@ -4,9 +4,9 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const partyStorage = require('../utils/partyStorage');
-const partyService = require('../services/partyService');
-const logger = require('../utils/logger');
+const partyStorage = require('../../utils/partyStorage');
+const partyService = require('../../services/partyService');
+const logger = require('../../utils/logger');
 
 // Instâncias para grupo (baseado em browiki.org/wiki/Instâncias)
 // Apenas instâncias que aceitam mais de 1 pessoa (modo 1+ ou 2+)
@@ -100,6 +100,68 @@ module.exports = {
                     option.setName('id')
                         .setDescription('ID do grupo (ou deixe vazio para ver seus grupos)')
                         .setRequired(false))
+        )
+        .addSubcommandGroup(group =>
+            group
+                .setName('loot')
+                .setDescription('Gerencia o loot do grupo')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('adicionar')
+                        .setDescription('Adiciona um item ao loot para sorteio')
+                        .addStringOption(option =>
+                            option.setName('item')
+                                .setDescription('Nome do item')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('grupo')
+                                .setDescription('ID do grupo (ou deixe vazio para o seu grupo mais recente)')
+                                .setRequired(false))
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('listar')
+                        .setDescription('Lista os itens no loot')
+                        .addStringOption(option =>
+                            option.setName('grupo')
+                                .setDescription('ID do grupo')
+                                .setRequired(false))
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('sortear')
+                        .setDescription('Sorteia os itens entre os membros')
+                        .addStringOption(option =>
+                            option.setName('grupo')
+                                .setDescription('ID do grupo')
+                                .setRequired(false))
+                        .addIntegerOption(option =>
+                            option.setName('item')
+                                .setDescription('Número do item específico (ou deixe vazio para sortear todos)')
+                                .setRequired(false))
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('remover')
+                        .setDescription('Remove um item do loot')
+                        .addIntegerOption(option =>
+                            option.setName('item')
+                                .setDescription('Número do item para remover')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('grupo')
+                                .setDescription('ID do grupo')
+                                .setRequired(false))
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('limpar')
+                        .setDescription('Limpa todo o loot do grupo')
+                        .addStringOption(option =>
+                            option.setName('grupo')
+                                .setDescription('ID do grupo')
+                                .setRequired(false))
+                )
         ),
     
     async autocomplete(interaction) {
@@ -136,7 +198,24 @@ module.exports = {
     },
     
     async execute(interaction) {
+        const subcommandGroup = interaction.options.getSubcommandGroup(false);
         const subcommand = interaction.options.getSubcommand();
+        
+        // Handle loot subcommand group
+        if (subcommandGroup === 'loot') {
+            switch (subcommand) {
+                case 'adicionar':
+                    return await handleLootAdd(interaction);
+                case 'listar':
+                    return await handleLootList(interaction);
+                case 'sortear':
+                    return await handleLootRoll(interaction);
+                case 'remover':
+                    return await handleLootRemove(interaction);
+                case 'limpar':
+                    return await handleLootClear(interaction);
+            }
+        }
         
         switch (subcommand) {
             case 'criar':
@@ -400,4 +479,271 @@ function parseDateTime(dateStr, timeStr) {
     } catch (error) {
         return null;
     }
+}
+
+// ==================== LOOT HANDLERS ====================
+
+/**
+ * Gets user's most recent active party as leader
+ * @param {string} guildId - Guild ID
+ * @param {string} userId - User ID
+ * @returns {Object|null} Party or null
+ */
+function getUserLeaderParty(guildId, userId) {
+    const parties = partyStorage.getActiveParties(guildId);
+    return parties.find(p => p.creatorId === userId) || null;
+}
+
+/**
+ * Gets a party by ID or user's leader party
+ * @param {Interaction} interaction - Discord interaction
+ * @returns {Object|null} Party or null with error reply
+ */
+async function getPartyForLoot(interaction) {
+    const partyId = interaction.options.getString('grupo');
+    
+    let party;
+    if (partyId) {
+        party = partyStorage.getParty(partyId);
+        if (!party) {
+            await interaction.reply({
+                content: '❌ Grupo não encontrado.',
+                ephemeral: true
+            });
+            return null;
+        }
+    } else {
+        party = getUserLeaderParty(interaction.guildId, interaction.user.id);
+        if (!party) {
+            await interaction.reply({
+                content: '❌ Você não tem nenhum grupo ativo como líder. Use `/grupo loot <comando> grupo:<ID>` para especificar.',
+                ephemeral: true
+            });
+            return null;
+        }
+    }
+    
+    return party;
+}
+
+/**
+ * Handles adding loot item
+ */
+async function handleLootAdd(interaction) {
+    const party = await getPartyForLoot(interaction);
+    if (!party) return;
+    
+    const itemName = interaction.options.getString('item');
+    
+    const result = partyStorage.addLoot(party.id, itemName, interaction.user.id);
+    
+    if (!result.success) {
+        return interaction.reply({
+            content: `❌ ${result.error}`,
+            ephemeral: true
+        });
+    }
+    
+    const lootCount = result.party.loot.length;
+    
+    await interaction.reply({
+        content: `🎁 Item **${itemName}** adicionado ao loot!\n📦 Total de itens no loot: **${lootCount}**\n\nUse \`/grupo loot sortear\` quando estiver pronto para sortear.`,
+        ephemeral: true
+    });
+    
+    logger.info('Loot item added via command', { partyId: party.id, item: itemName });
+}
+
+/**
+ * Handles listing loot
+ */
+async function handleLootList(interaction) {
+    const partyId = interaction.options.getString('grupo');
+    
+    let party;
+    if (partyId) {
+        party = partyStorage.getParty(partyId);
+    } else {
+        // Try to find any active party user is part of or leading
+        const allParties = partyStorage.getActiveParties(interaction.guildId);
+        party = allParties.find(p => 
+            p.creatorId === interaction.user.id || 
+            p.participants.some(part => part.userId === interaction.user.id)
+        );
+    }
+    
+    if (!party) {
+        return interaction.reply({
+            content: '❌ Nenhum grupo encontrado.',
+            ephemeral: true
+        });
+    }
+    
+    const loot = party.loot || [];
+    
+    if (loot.length === 0) {
+        return interaction.reply({
+            content: `📦 **Loot de ${party.instanceName}**\n\n*Nenhum item no loot ainda.*\n\nO líder pode adicionar itens com \`/grupo loot adicionar\``,
+            ephemeral: true
+        });
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle(`🎁 Loot - ${party.instanceName}`)
+        .setColor('#F5A623')
+        .setDescription(`**${loot.length}** item(ns) no loot`);
+    
+    let lootText = '';
+    loot.forEach((item, index) => {
+        const status = item.winner 
+            ? `✅ → **${item.winner.userName}**` 
+            : '🎲 *Não sorteado*';
+        lootText += `**${index + 1}.** ${item.name} ${status}\n`;
+    });
+    
+    embed.addFields({
+        name: '📋 Itens',
+        value: lootText || '*Vazio*',
+        inline: false
+    });
+    
+    const unrolled = loot.filter(i => !i.winner).length;
+    if (unrolled > 0) {
+        embed.setFooter({ text: `${unrolled} item(ns) aguardando sorteio` });
+    }
+    
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+/**
+ * Handles rolling loot
+ */
+async function handleLootRoll(interaction) {
+    const party = await getPartyForLoot(interaction);
+    if (!party) return;
+    
+    const specificItem = interaction.options.getInteger('item');
+    
+    await interaction.deferReply(); // Public reply for the roll
+    
+    if (specificItem !== null) {
+        // Roll specific item
+        const result = partyStorage.rollLootItem(party.id, specificItem - 1, interaction.user.id);
+        
+        if (!result.success) {
+            return interaction.editReply(`❌ ${result.error}`);
+        }
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🎲 Sorteio de Loot!')
+            .setColor('#3BA55C')
+            .setDescription(`**${result.item.name}**`)
+            .addFields({
+                name: '🏆 Vencedor',
+                value: `<@${result.winner.userId}>`,
+                inline: true
+            })
+            .setFooter({ text: `Grupo: ${party.instanceName}` })
+            .setTimestamp();
+        
+        await interaction.editReply({ 
+            content: `🎉 Parabéns <@${result.winner.userId}>!`,
+            embeds: [embed] 
+        });
+        
+    } else {
+        // Roll all items
+        const result = partyStorage.rollAllLoot(party.id, interaction.user.id);
+        
+        if (!result.success) {
+            return interaction.editReply(`❌ ${result.error}`);
+        }
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🎲 Sorteio de Loot!')
+            .setColor('#3BA55C')
+            .setDescription(`**${result.results.length}** item(ns) sorteado(s)`)
+            .setFooter({ text: `Grupo: ${party.instanceName}` })
+            .setTimestamp();
+        
+        // Group results by winner
+        const byWinner = {};
+        for (const { item, winner } of result.results) {
+            if (!byWinner[winner.userId]) {
+                byWinner[winner.userId] = { name: winner.userName, items: [] };
+            }
+            byWinner[winner.userId].items.push(item.name);
+        }
+        
+        let resultsText = '';
+        for (const [userId, data] of Object.entries(byWinner)) {
+            resultsText += `**<@${userId}>** ganhou:\n`;
+            data.items.forEach(item => {
+                resultsText += `  🎁 ${item}\n`;
+            });
+            resultsText += '\n';
+        }
+        
+        embed.addFields({
+            name: '🏆 Resultados',
+            value: resultsText || '*Nenhum item sorteado*',
+            inline: false
+        });
+        
+        // Mention all winners
+        const winners = [...new Set(result.results.map(r => `<@${r.winner.userId}>`))];
+        
+        await interaction.editReply({ 
+            content: `🎉 Parabéns aos vencedores! ${winners.join(' ')}`,
+            embeds: [embed] 
+        });
+    }
+    
+    logger.info('Loot rolled via command', { partyId: party.id, user: interaction.user.id });
+}
+
+/**
+ * Handles removing a loot item
+ */
+async function handleLootRemove(interaction) {
+    const party = await getPartyForLoot(interaction);
+    if (!party) return;
+    
+    const itemIndex = interaction.options.getInteger('item');
+    
+    const result = partyStorage.removeLoot(party.id, itemIndex - 1, interaction.user.id);
+    
+    if (!result.success) {
+        return interaction.reply({
+            content: `❌ ${result.error}`,
+            ephemeral: true
+        });
+    }
+    
+    await interaction.reply({
+        content: `🗑️ Item **${result.removedItem.name}** removido do loot.`,
+        ephemeral: true
+    });
+}
+
+/**
+ * Handles clearing all loot
+ */
+async function handleLootClear(interaction) {
+    const party = await getPartyForLoot(interaction);
+    if (!party) return;
+    
+    const result = partyStorage.clearLoot(party.id, interaction.user.id);
+    
+    if (!result.success) {
+        return interaction.reply({
+            content: `❌ ${result.error}`,
+            ephemeral: true
+        });
+    }
+    
+    await interaction.reply({
+        content: '🗑️ Todo o loot foi limpo.',
+        ephemeral: true
+    });
 }

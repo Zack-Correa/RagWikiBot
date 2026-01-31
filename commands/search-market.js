@@ -11,6 +11,7 @@ const config = require('../config');
 const i18n = require('../utils/i18n');
 const { ValidationError, CommandError, APIError } = require('../utils/errors');
 const { COLORS, TIMEOUTS, SELECT_MENU } = require('../utils/constants');
+const { getServerChoices, getStoreTypeChoices } = require('../utils/commandHelpers');
 
 // Market-specific constants
 const ITEMS_PER_PAGE = 10;
@@ -31,21 +32,14 @@ module.exports = {
                 .setName('tipo')
                 .setDescription('Tipo de transação (padrão: Comprando)')
                 .setRequired(false)
-                .addChoices(
-                    { name: 'Comprando', value: 'BUY' },
-                    { name: 'Vendendo', value: 'SELL' }
-                )
+                .addChoices(...getStoreTypeChoices())
         )
         .addStringOption(option =>
             option
                 .setName('servidor')
                 .setDescription('Servidor (padrão: Freya)')
                 .setRequired(false)
-                .addChoices(
-                    { name: 'Freya', value: 'FREYA' },
-                    { name: 'Nidhogg', value: 'NIDHOGG' },
-                    { name: 'Yggdrasil', value: 'YGGDRASIL' }
-                )
+                .addChoices(...getServerChoices())
         ),
 
     async execute(interaction) {
@@ -440,7 +434,7 @@ function setupMarketItemCollector(message, items, t) {
  */
 function createMarketItemDetailEmbed(item, t) {
     const price = gnjoy.formatPrice(item.itemPrice);
-    const storeTypeLabel = item.storeTypeName === 'BUY' ? 'Comprando' : 'Vendendo';
+    const storeTypeLabel = gnjoy.getStoreTypeLabel(item.storeTypeName);
     const slots = item.slotMaxCount || 'N/A';
     
     const embed = new EmbedBuilder()

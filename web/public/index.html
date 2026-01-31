@@ -23,6 +23,8 @@
             <a href="#news" class="nav-link" data-section="news">Notícias</a>
             <a href="#deploy" class="nav-link" data-section="deploy">Deploy</a>
             <a href="#logs" class="nav-link" data-section="logs">Logs</a>
+            <a href="#audit" class="nav-link" data-section="audit">Auditoria</a>
+            <a href="#plugins" class="nav-link" data-section="plugins">Plugins</a>
             <a href="/logout" class="nav-link logout">Sair</a>
         </div>
     </nav>
@@ -32,88 +34,135 @@
         <section id="dashboard" class="section active">
             <h2>Dashboard</h2>
             
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-total-alerts">-</div>
-                    <div class="stat-label">Total de Alertas</div>
+            <!-- Stats Cards -->
+            <div class="dashboard-stats">
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="stat-total-alerts">-</div>
+                    <div class="dash-stat-label">Alertas Ativos</div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-unique-users">-</div>
-                    <div class="stat-label">Usuários</div>
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="stat-unique-users">-</div>
+                    <div class="dash-stat-label">Usuários</div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-unique-searches">-</div>
-                    <div class="stat-label">Buscas Únicas</div>
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="stat-unique-searches">-</div>
+                    <div class="dash-stat-label">Buscas Únicas</div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-service-status">-</div>
-                    <div class="stat-label">Status do Serviço</div>
-                </div>
-            </div>
-            
-            <div class="info-card">
-                <h3>Informações do Sistema</h3>
-                <div class="info-row">
-                    <span class="info-label">Última Verificação:</span>
-                    <span class="info-value" id="info-last-check">-</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Intervalo:</span>
-                    <span class="info-value" id="info-interval">-</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Cooldown:</span>
-                    <span class="info-value" id="info-cooldown">-</span>
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="stat-service-status">-</div>
+                    <div class="dash-stat-label">Status do Serviço</div>
                 </div>
             </div>
-            
-            <div class="actions-card">
-                <h3>Ações</h3>
-                <div class="actions-buttons">
-                    <button class="btn btn-primary" id="btn-force-check">Forçar Verificação</button>
-                    <button class="btn btn-warning" id="btn-toggle-service">Parar Serviço</button>
-                    <button class="btn btn-secondary" id="btn-refresh">Atualizar</button>
-                </div>
-            </div>
-            
-            <div class="server-status-card">
-                <h3>🖥️ Status dos Servidores</h3>
-                <div class="server-status-grid" id="server-status-grid">
-                    <div class="loading">Carregando...</div>
-                </div>
-                <div class="server-status-info">
-                    <span class="info-label">Última verificação:</span>
-                    <span class="info-value" id="server-last-check">-</span>
-                    <span class="info-label" style="margin-left: 20px;">Servidor:</span>
-                    <span class="info-value" id="server-account-address">-</span>
-                </div>
-                <div class="server-status-actions">
-                    <button class="btn btn-primary" id="btn-check-servers">Verificar Agora</button>
-                </div>
-            </div>
-            
-            <div class="update-card">
-                <h3>🔄 Atualização do Bot</h3>
-                <div class="update-status" id="update-status">
-                    <div class="update-info">
-                        <span class="info-label">Branch:</span>
-                        <span class="info-value" id="update-branch">-</span>
-                        <span class="info-label" style="margin-left: 20px;">Commit atual:</span>
-                        <span class="info-value" id="update-current-commit">-</span>
+
+            <!-- Main Dashboard Grid -->
+            <div class="dashboard-grid">
+                <!-- Left Column -->
+                <div class="dashboard-col">
+                    <!-- System Info + Actions -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <h3>Sistema de Alertas</h3>
+                            <span class="dash-card-badge" id="service-badge">-</span>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-info-list">
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Última Verificação</span>
+                                    <span class="dash-info-value" id="info-last-check">-</span>
+                                </div>
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Intervalo</span>
+                                    <span class="dash-info-value" id="info-interval">-</span>
+                                </div>
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Cooldown</span>
+                                    <span class="dash-info-value" id="info-cooldown">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <button class="btn btn-primary" id="btn-force-check">Verificar Agora</button>
+                            <button class="btn btn-warning" id="btn-toggle-service">Parar</button>
+                            <button class="btn btn-secondary" id="btn-refresh">Atualizar</button>
+                        </div>
                     </div>
-                    <div class="update-check-result" id="update-check-result" style="display: none;">
-                        <div class="update-available">
-                            <span class="update-badge">⬆️ Atualizações disponíveis</span>
-                            <pre id="update-changes"></pre>
+
+                    <!-- Server Status -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <h3>Servidores do Jogo</h3>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="server-cards" id="server-status-grid">
+                                <div class="loading">Carregando...</div>
+                            </div>
+                            <div class="server-meta">
+                                <span class="server-meta-item">
+                                    Verificado: <span id="server-last-check">-</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <button class="btn btn-secondary" id="btn-check-servers">Verificar Servidores</button>
                         </div>
                     </div>
                 </div>
-                <div class="update-actions">
-                    <button class="btn btn-secondary" id="btn-check-updates">🔍 Verificar Atualizações</button>
-                    <button class="btn btn-primary" id="btn-pull-updates" disabled>📥 Baixar Atualizações</button>
-                    <button class="btn btn-danger" id="btn-restart-bot">🔁 Reiniciar Bot</button>
+
+                <!-- Right Column -->
+                <div class="dashboard-col">
+                    <!-- Bot Update -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <h3>Atualização do Bot</h3>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-info-list">
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Branch</span>
+                                    <span class="dash-info-value" id="update-branch">-</span>
+                                </div>
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Commit</span>
+                                    <code class="dash-info-value" id="update-current-commit">-</code>
+                                </div>
+                            </div>
+                            <div class="update-check-result" id="update-check-result" style="display: none;">
+                                <div class="update-available">
+                                    <span class="update-badge">Atualizações disponíveis</span>
+                                    <pre id="update-changes"></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <button class="btn btn-secondary" id="btn-check-updates">Verificar</button>
+                            <button class="btn btn-primary" id="btn-pull-updates" disabled>Baixar</button>
+                            <button class="btn btn-danger" id="btn-restart-bot">Reiniciar</button>
+                        </div>
+                    </div>
+
+                    <!-- Quick Stats -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <h3>Resumo</h3>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-info-list">
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Comandos Hoje</span>
+                                    <span class="dash-info-value highlight" id="dash-commands-today">-</span>
+                                </div>
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Grupos Ativos</span>
+                                    <span class="dash-info-value highlight" id="dash-parties-active">-</span>
+                                </div>
+                                <div class="dash-info-row">
+                                    <span class="dash-info-label">Plugins Ativos</span>
+                                    <span class="dash-info-value highlight" id="dash-plugins-active">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <p class="update-warning">⚠️ Reiniciar o bot irá desconectá-lo temporariamente do Discord.</p>
             </div>
         </section>
 
@@ -121,8 +170,9 @@
         <section id="metrics" class="section">
             <h2>Métricas de Uso</h2>
             
+            <!-- Summary Cards -->
             <div class="metrics-overview">
-                <div class="stats-grid">
+                <div class="stats-grid stats-grid-6">
                     <div class="stat-card">
                         <div class="stat-value" id="metrics-today-commands">-</div>
                         <div class="stat-label">Comandos Hoje</div>
@@ -132,6 +182,10 @@
                         <div class="stat-label">Usuários Hoje</div>
                     </div>
                     <div class="stat-card">
+                        <div class="stat-value" id="metrics-today-errors">-</div>
+                        <div class="stat-label">Erros Hoje</div>
+                    </div>
+                    <div class="stat-card">
                         <div class="stat-value" id="metrics-total-commands">-</div>
                         <div class="stat-label">Total de Comandos</div>
                     </div>
@@ -139,28 +193,103 @@
                         <div class="stat-value" id="metrics-total-users">-</div>
                         <div class="stat-label">Total de Usuários</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="metrics-error-rate">-</div>
+                        <div class="stat-label">Taxa de Erro</div>
+                    </div>
                 </div>
             </div>
 
+            <!-- Period Selector -->
+            <div class="metrics-period-selector">
+                <span class="period-label">Período:</span>
+                <button class="btn btn-sm period-btn active" data-days="7">7 dias</button>
+                <button class="btn btn-sm period-btn" data-days="14">14 dias</button>
+                <button class="btn btn-sm period-btn" data-days="30">30 dias</button>
+            </div>
+
+            <!-- Main Charts Row -->
             <div class="metrics-charts-row">
                 <div class="chart-card">
-                    <h3>Comandos por Dia (últimos 7 dias)</h3>
+                    <h3>Comandos e Usuários por Dia</h3>
                     <div class="chart-container">
                         <canvas id="chart-commands-daily"></canvas>
                     </div>
                 </div>
                 <div class="chart-card">
-                    <h3>Distribuição por Hora (hoje)</h3>
+                    <h3>Distribuição por Hora (Hoje)</h3>
                     <div class="chart-container">
                         <canvas id="chart-commands-hourly"></canvas>
                     </div>
                 </div>
             </div>
 
+            <!-- Error and Response Time Charts -->
+            <div class="metrics-charts-row">
+                <div class="chart-card">
+                    <h3>Erros por Dia</h3>
+                    <div class="chart-container">
+                        <canvas id="chart-errors-daily"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h3>Tempo de Resposta Médio (ms)</h3>
+                    <div class="chart-container">
+                        <canvas id="chart-response-times"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Command Distribution -->
+            <div class="metrics-charts-row-flex">
+                <div class="chart-card chart-card-small">
+                    <h3>Distribuição de Comandos</h3>
+                    <div class="chart-container chart-container-pie">
+                        <canvas id="chart-commands-pie"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card chart-card-wide">
+                    <h3>Ranking de Comandos</h3>
+                    <div class="top-commands-grid" id="top-commands-grid">
+                        <div class="loading">Carregando...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Heatmap and Top Users -->
+            <div class="metrics-charts-row">
+                <div class="chart-card">
+                    <h3>Atividade Semanal</h3>
+                    <div class="heatmap-container" id="heatmap-container">
+                        <div class="loading">Carregando...</div>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h3>Usuários Mais Ativos</h3>
+                    <div class="top-users-list" id="top-users-list">
+                        <div class="loading">Carregando...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Command Performance Table -->
             <div class="metrics-commands-card">
-                <h3>Comandos Mais Usados</h3>
-                <div class="top-commands-grid" id="top-commands-grid">
-                    <div class="loading">Carregando...</div>
+                <h3>Performance por Comando</h3>
+                <div class="command-performance-table">
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Comando</th>
+                                <th>Execuções</th>
+                                <th>Erros</th>
+                                <th>Taxa de Erro</th>
+                                <th>Tempo Médio</th>
+                            </tr>
+                        </thead>
+                        <tbody id="command-performance-body">
+                            <tr><td colspan="5" class="loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -648,6 +777,99 @@
             </div>
             
             <div class="logs-container" id="logs-container">
+                <div class="loading">Carregando...</div>
+            </div>
+        </section>
+
+        <!-- Audit Section -->
+        <section id="audit" class="section">
+            <h2>📋 Log de Auditoria</h2>
+            
+            <div class="audit-stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="audit-total">-</div>
+                    <div class="stat-label">Total de Registros</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="audit-today">-</div>
+                    <div class="stat-label">Hoje</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="audit-success-rate">-</div>
+                    <div class="stat-label">Taxa de Sucesso</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="audit-commands">-</div>
+                    <div class="stat-label">Comandos Discord</div>
+                </div>
+            </div>
+            
+            <div class="filters-card">
+                <div class="filters-row">
+                    <div class="filter-group">
+                        <label>Tipo:</label>
+                        <select id="filter-audit-type">
+                            <option value="">Todos</option>
+                            <option value="ADMIN_ACTION">Admin Panel</option>
+                            <option value="DISCORD_COMMAND">Comandos Discord</option>
+                            <option value="PLUGIN_ACTION">Plugins</option>
+                            <option value="SYSTEM">Sistema</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Ação:</label>
+                        <input type="text" id="filter-audit-action" placeholder="Ex: alerts.create">
+                    </div>
+                    <div class="filter-group">
+                        <label>De:</label>
+                        <input type="date" id="filter-audit-date-from">
+                    </div>
+                    <div class="filter-group">
+                        <label>Até:</label>
+                        <input type="date" id="filter-audit-date-to">
+                    </div>
+                    <div class="filter-group">
+                        <label>Limite:</label>
+                        <select id="filter-audit-limit">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filters-row" style="margin-top: 10px;">
+                    <button class="btn btn-primary" id="btn-filter-audit">Filtrar</button>
+                    <button class="btn btn-secondary" id="btn-refresh-audit">Atualizar</button>
+                    <div class="export-group">
+                        <button class="btn btn-info" id="btn-export-audit-json">Exportar JSON</button>
+                        <button class="btn btn-info" id="btn-export-audit-csv">Exportar CSV</button>
+                    </div>
+                    <button class="btn btn-danger" id="btn-cleanup-audit">Limpar Antigos</button>
+                </div>
+            </div>
+            
+            <div class="audit-container" id="audit-container">
+                <div class="loading">Carregando...</div>
+            </div>
+            
+            <div class="pagination-container" id="audit-pagination">
+            </div>
+        </section>
+
+        <!-- Plugins Section -->
+        <section id="plugins" class="section">
+            <h2>🔌 Plugins</h2>
+            
+            <div class="plugins-info-card">
+                <div class="plugins-info">
+                    <p>Plugins estendem a funcionalidade do bot com comandos e eventos personalizados.</p>
+                    <p><strong>Diretório de plugins:</strong> <code>/plugins/</code></p>
+                </div>
+                <button class="btn btn-secondary" id="btn-refresh-plugins">Atualizar Lista</button>
+            </div>
+            
+            <div class="plugins-container" id="plugins-container">
                 <div class="loading">Carregando...</div>
             </div>
         </section>

@@ -7,6 +7,7 @@ const axios = require('axios');
 const logger = require('../../utils/logger');
 const { APIError } = require('../../utils/errors');
 const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+const apiCache = require('../../utils/apiCache');
 
 // API endpoints
 const ENDPOINTS = {
@@ -525,7 +526,44 @@ async function getMarketWithHistory(searchTerm, options = {}) {
     };
 }
 
+// ==================== CACHED WRAPPERS ====================
+
+/**
+ * Cached version of searchMarket
+ * Cache TTL: 5 minutes (market prices change frequently)
+ */
+async function searchMarketCached(searchWord, options = {}) {
+    const storeType = options.storeType || STORE_TYPES.BUY;
+    const server = options.server || SERVERS.FREYA;
+    
+    return apiCache.getOrFetch('MARKET_SEARCH', { searchWord, storeType, server }, 
+        () => searchMarket(searchWord, options)
+    );
+}
+
+/**
+ * Cached version of getPriceHistory
+ * Cache TTL: 15 minutes (history changes less frequently)
+ */
+async function getPriceHistoryCached(itemId, server = 'FREYA', period = 'ALL', searchWord = '') {
+    return apiCache.getOrFetch('PRICE_HISTORY', { itemId, server, period }, 
+        () => getPriceHistory(itemId, server, period, searchWord)
+    );
+}
+
+/**
+ * Cached version of getMarketWithHistory
+ */
+async function getMarketWithHistoryCached(searchTerm, options = {}) {
+    const { server = 'FREYA', storeType = 'BUY' } = options;
+    
+    return apiCache.getOrFetch('MARKET_SEARCH', { searchTerm, server, storeType, withHistory: true }, 
+        () => getMarketWithHistory(searchTerm, options)
+    );
+}
+
 module.exports = {
+    // Original functions
     searchMarket,
     getPriceHistory,
     getMarketWithHistory,
@@ -534,5 +572,12 @@ module.exports = {
     SERVERS,
     STORE_TYPES,
     SERVER_IDS,
-    ENDPOINTS
+    ENDPOINTS,
+    
+    // Cached versions
+    cached: {
+        searchMarket: searchMarketCached,
+        getPriceHistory: getPriceHistoryCached,
+        getMarketWithHistory: getMarketWithHistoryCached
+    }
 };

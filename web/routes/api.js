@@ -14,11 +14,32 @@ const marketAlertService = require('../../services/marketAlertService');
 const deployService = require('../../services/deployService');
 const gnjoyEvents = require('../../integrations/database/gnjoy-events');
 const logger = require('../../utils/logger');
+const auditLogger = require('../../utils/auditLogger');
 const { requireAuth } = require('../middleware/auth');
 
 // Cache for user info to avoid repeated Discord API calls
 const userCache = new Map();
 const USER_CACHE_TTL = 300000; // 5 minutes
+
+/**
+ * Formats uptime in human-readable format
+ * @param {number} seconds - Uptime in seconds
+ * @returns {string} Formatted uptime
+ */
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    parts.push(`${secs}s`);
+    
+    return parts.join(' ');
+}
 
 /**
  * Gets user info from Discord, with caching
@@ -65,7 +86,98 @@ async function getUserInfo(getClient, userId) {
 module.exports = function createApiRoutes(getDiscordClient) {
     const router = express.Router();
     
-    // Apply authentication to all API routes
+    // ==================== PUBLIC ENDPOINTS (NO AUTH) ====================
+    
+    /**
+     * GET /api/health
+     * Health check endpoint - no authentication required
+     * Returns bot status, uptime, and plugin information
+     */
+    router.get('/health', (req, res) => {
+        try {
+            const pluginService = require('../../services/pluginService');
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            const apiCache = require('../../utils/apiCache');
+            const client = getDiscordClient();
+            
+            const uptime = process.uptime();
+            const memUsage = process.memoryUsage();
+            
+            // Get plugin status
+            const plugins = pluginService.getLoadedPlugins();
+            const pluginStatus = {};
+            for (const plugin of plugins) {
+                pluginStatus[plugin.name] = {
+                    enabled: plugin.enabled,
+                    version: plugin.version,
+                    commands: plugin.commands?.length || 0
+                };
+            }
+            
+            // Get Discord status
+            const discordStatus = client ? {
+                connected: client.isReady(),
+                guilds: client.guilds?.cache?.size || 0,
+                ping: client.ws?.ping || null
+            } : { connected: false };
+            
+            // Get external APIs health
+            const externalApis = apiHealthCheck.getHealthSummary();
+            
+            // Get cache stats
+            const cacheStats = apiCache.getStats();
+            
+            res.json({
+                status: externalApis.allHealthy ? 'healthy' : 'degraded',
+                timestamp: new Date().toISOString(),
+                uptime: {
+                    seconds: Math.floor(uptime),
+                    formatted: formatUptime(uptime)
+                },
+                memory: {
+                    heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+                    heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+                    rss: Math.round(memUsage.rss / 1024 / 1024)
+                },
+                discord: discordStatus,
+                plugins: pluginStatus,
+                externalApis: externalApis,
+                cache: cacheStats,
+                version: require('../../package.json').version || '1.0.0'
+            });
+        } catch (error) {
+            res.status(500).json({
+                status: 'unhealthy',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            });
+        }
+    });
+    
+    /**
+     * GET /api/health/apis
+     * Returns detailed health status of external APIs
+     */
+    router.get('/health/apis', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            const apiCache = require('../../utils/apiCache');
+            
+            res.json({
+                success: true,
+                data: {
+                    apis: apiHealthCheck.getHealthSummary(),
+                    cache: apiCache.getStats()
+                }
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+    
+    // ==================== AUTHENTICATED ENDPOINTS ====================
+    
+    // Apply authentication to all subsequent API routes
     router.use(requireAuth);
 
     /**
@@ -186,6 +298,13 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 searchTerm 
             });
             
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.ALERT_CREATE,
+                req,
+                target: auditLogger.createTarget('alert', alert.id, searchTerm),
+                details: { userId, searchTerm, server, storeType, maxPrice, minQuantity }
+            });
+            
             res.json({ 
                 success: true, 
                 message: 'Alerta criado com sucesso',
@@ -213,6 +332,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
             if (data.alerts.length < initialLength) {
                 alertStorage.saveAlerts(data);
                 logger.info('Alert removed by admin', { alertId: id });
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.ALERT_DELETE,
+                    req,
+                    target: auditLogger.createTarget('alert', id)
+                });
                 res.json({ success: true, message: 'Alerta removido com sucesso' });
             } else {
                 res.status(404).json({ success: false, error: 'Alerta não encontrado' });
@@ -377,6 +501,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
         try {
             marketAlertService.stop();
             logger.info('Alert service stopped by admin');
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.SERVICE_STOP,
+                req,
+                target: auditLogger.createTarget('service', 'marketAlertService')
+            });
             res.json({ success: true, message: 'Serviço parado' });
         } catch (error) {
             logger.error('Error stopping service', { error: error.message });
@@ -392,6 +521,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
         try {
             marketAlertService.start();
             logger.info('Alert service started by admin');
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.SERVICE_START,
+                req,
+                target: auditLogger.createTarget('service', 'marketAlertService')
+            });
             res.json({ success: true, message: 'Serviço iniciado' });
         } catch (error) {
             logger.error('Error starting service', { error: error.message });
@@ -434,6 +568,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             }
             
             logger.info('Config updated by admin', { updates });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.CONFIG_UPDATE,
+                req,
+                target: auditLogger.createTarget('config', 'system'),
+                details: { updates }
+            });
             res.json({
                 success: true,
                 data: config,
@@ -526,6 +666,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             const permission = configStorage.addPermission(type, value);
             
             logger.info('Permission added by admin', { type, value });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.PERMISSION_ADD,
+                req,
+                target: auditLogger.createTarget('permission', permission.id, value),
+                details: { type, value }
+            });
             res.json({ 
                 success: true, 
                 data: permission,
@@ -588,6 +734,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
                     permissionId: id, 
                     alertsCleared: result.alertsCleared,
                     resolvedUserId
+                });
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.PERMISSION_REMOVE,
+                    req,
+                    target: auditLogger.createTarget('permission', id),
+                    details: { alertsCleared: result.alertsCleared, resolvedUserId }
                 });
                 
                 let message = 'Permissão removida com sucesso';
@@ -709,6 +861,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             const result = await deployService.deployGlobal(commands || null);
             
             logger.info('Global deploy triggered by admin', { commands: result.commands });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.DEPLOY_GLOBAL,
+                req,
+                target: auditLogger.createTarget('deploy', 'global'),
+                details: { commands: result.commands, count: result.count }
+            });
             res.json({
                 success: true,
                 data: result,
@@ -752,6 +910,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
             await deployService.clearGlobal();
             
             logger.info('Global commands cleared by admin');
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.DEPLOY_CLEAR_GLOBAL,
+                req,
+                target: auditLogger.createTarget('deploy', 'global')
+            });
             res.json({
                 success: true,
                 message: 'Comandos globais removidos'
@@ -1244,6 +1407,493 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    /**
+     * GET /api/metrics/guilds
+     * Returns metrics aggregated by guild
+     * Query params: limit (default 20), active (true/false)
+     */
+    router.get('/metrics/guilds', async (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const { limit, active } = req.query;
+            
+            const guilds = metricsStorage.getAllGuildStats();
+            const summary = metricsStorage.getGuildActivitySummary();
+            
+            // Filter by active status if requested
+            let filteredGuilds = guilds;
+            if (active === 'true') {
+                filteredGuilds = guilds.filter(g => g.daysSinceActive <= 7);
+            } else if (active === 'false') {
+                filteredGuilds = guilds.filter(g => g.daysSinceActive > 7);
+            }
+            
+            // Sort by total commands and limit
+            filteredGuilds = filteredGuilds
+                .sort((a, b) => b.totalCommands - a.totalCommands)
+                .slice(0, parseInt(limit, 10) || 20);
+            
+            // Try to enrich with Discord guild names
+            const client = getDiscordClient();
+            if (client) {
+                for (const guild of filteredGuilds) {
+                    try {
+                        const discordGuild = await client.guilds.fetch(guild.guildId);
+                        if (discordGuild) {
+                            guild.name = discordGuild.name;
+                            guild.icon = discordGuild.iconURL({ size: 64 });
+                            guild.memberCount = discordGuild.memberCount;
+                        }
+                    } catch (e) {
+                        // Guild not accessible, keep stored name
+                    }
+                }
+            }
+            
+            res.json({
+                success: true,
+                data: {
+                    guilds: filteredGuilds,
+                    summary,
+                    total: guilds.length
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting guild metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/guilds/:guildId
+     * Returns detailed metrics for a specific guild
+     */
+    router.get('/metrics/guilds/:guildId', async (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const { guildId } = req.params;
+            
+            const stats = metricsStorage.getGuildStats(guildId);
+            
+            if (!stats) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Guild não encontrada nas métricas' 
+                });
+            }
+            
+            // Try to enrich with Discord guild info
+            const client = getDiscordClient();
+            if (client) {
+                try {
+                    const discordGuild = await client.guilds.fetch(guildId);
+                    if (discordGuild) {
+                        stats.name = discordGuild.name;
+                        stats.icon = discordGuild.iconURL({ size: 128 });
+                        stats.memberCount = discordGuild.memberCount;
+                        stats.owner = discordGuild.ownerId;
+                    }
+                } catch (e) {
+                    // Guild not accessible
+                }
+            }
+            
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting guild metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/extended
+     * Returns extended metrics with more details
+     * Query params: days (default 30)
+     */
+    router.get('/metrics/extended', async (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const days = parseInt(req.query.days, 10) || 30;
+            const metrics = metricsStorage.loadMetrics();
+            
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const cutoffKey = cutoff.toISOString().split('T')[0];
+            
+            // Aggregate data by day
+            const dailyStats = [];
+            const commandStats = {};
+            const userActivity = {};
+            const hourlyHeatmap = {}; // day of week -> hour -> count
+            
+            for (const [date, data] of Object.entries(metrics.daily)) {
+                if (date >= cutoffKey) {
+                    const dayOfWeek = new Date(date).getDay();
+                    
+                    dailyStats.push({
+                        date,
+                        commands: data.totalCommands || 0,
+                        errors: data.totalErrors || 0,
+                        users: data.uniqueUsers?.length || 0,
+                        errorRate: data.totalCommands > 0 
+                            ? ((data.totalErrors / data.totalCommands) * 100).toFixed(1) 
+                            : 0
+                    });
+                    
+                    // Aggregate command stats
+                    for (const [cmd, cmdData] of Object.entries(data.commands || {})) {
+                        if (!commandStats[cmd]) {
+                            commandStats[cmd] = {
+                                name: cmd,
+                                count: 0,
+                                errors: 0,
+                                totalResponseMs: 0,
+                                executions: []
+                            };
+                        }
+                        commandStats[cmd].count += cmdData.count || 0;
+                        commandStats[cmd].errors += cmdData.errors || 0;
+                        commandStats[cmd].totalResponseMs += cmdData.totalResponseMs || 0;
+                        commandStats[cmd].executions.push({
+                            date,
+                            count: cmdData.count,
+                            avgResponseMs: cmdData.avgResponseMs
+                        });
+                    }
+                    
+                    // Track user activity
+                    for (const userId of (data.uniqueUsers || [])) {
+                        if (!userActivity[userId]) {
+                            userActivity[userId] = { days: 0, firstSeen: date, lastSeen: date };
+                        }
+                        userActivity[userId].days++;
+                        userActivity[userId].lastSeen = date;
+                    }
+                }
+            }
+            
+            // Build hourly heatmap from hourly data
+            for (const [hourKey, data] of Object.entries(metrics.hourly || {})) {
+                const [dateStr, hour] = hourKey.split('T');
+                if (dateStr >= cutoffKey) {
+                    const dayOfWeek = new Date(dateStr).getDay();
+                    if (!hourlyHeatmap[dayOfWeek]) {
+                        hourlyHeatmap[dayOfWeek] = {};
+                    }
+                    if (!hourlyHeatmap[dayOfWeek][hour]) {
+                        hourlyHeatmap[dayOfWeek][hour] = 0;
+                    }
+                    hourlyHeatmap[dayOfWeek][hour] += data.totalCommands || 0;
+                }
+            }
+            
+            // Calculate command stats
+            const commandRanking = Object.values(commandStats)
+                .map(cmd => ({
+                    ...cmd,
+                    avgResponseMs: cmd.count > 0 
+                        ? Math.round(cmd.totalResponseMs / cmd.count) 
+                        : 0,
+                    errorRate: cmd.count > 0 
+                        ? ((cmd.errors / cmd.count) * 100).toFixed(1) 
+                        : 0
+                }))
+                .sort((a, b) => b.count - a.count);
+            
+            // Calculate top users
+            const topUsers = Object.entries(userActivity)
+                .map(([userId, data]) => ({ userId, ...data }))
+                .sort((a, b) => b.days - a.days)
+                .slice(0, 10);
+            
+            // Enrich top users with Discord info
+            const enrichedTopUsers = await Promise.all(
+                topUsers.map(async user => {
+                    const info = await getUserInfo(getDiscordClient, user.userId);
+                    return { ...user, ...info };
+                })
+            );
+            
+            // Calculate averages
+            const totalDays = dailyStats.length;
+            const avgCommandsPerDay = totalDays > 0 
+                ? Math.round(dailyStats.reduce((sum, d) => sum + d.commands, 0) / totalDays) 
+                : 0;
+            const avgUsersPerDay = totalDays > 0 
+                ? Math.round(dailyStats.reduce((sum, d) => sum + d.users, 0) / totalDays) 
+                : 0;
+            const overallErrorRate = metrics.totals.commands > 0
+                ? ((metrics.totals.errors / metrics.totals.commands) * 100).toFixed(2)
+                : 0;
+            
+            res.json({
+                success: true,
+                data: {
+                    period: { days, from: cutoffKey, to: new Date().toISOString().split('T')[0] },
+                    summary: {
+                        totalCommands: metrics.totals.commands,
+                        totalErrors: metrics.totals.errors,
+                        totalUsers: metrics.totals.uniqueUsers?.length || 0,
+                        avgCommandsPerDay,
+                        avgUsersPerDay,
+                        overallErrorRate
+                    },
+                    daily: dailyStats.sort((a, b) => a.date.localeCompare(b.date)),
+                    commands: commandRanking,
+                    topUsers: enrichedTopUsers,
+                    heatmap: hourlyHeatmap
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting extended metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/errors
+     * Returns error statistics
+     * Query params: days (default 7)
+     */
+    router.get('/metrics/errors', (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const days = parseInt(req.query.days, 10) || 7;
+            const metrics = metricsStorage.loadMetrics();
+            
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const cutoffKey = cutoff.toISOString().split('T')[0];
+            
+            const labels = [];
+            const errors = [];
+            const errorsByCommand = {};
+            
+            for (const [date, data] of Object.entries(metrics.daily)) {
+                if (date >= cutoffKey) {
+                    labels.push(date.slice(5)); // MM-DD format
+                    errors.push(data.totalErrors || 0);
+                    
+                    for (const [cmd, cmdData] of Object.entries(data.commands || {})) {
+                        if (cmdData.errors > 0) {
+                            if (!errorsByCommand[cmd]) {
+                                errorsByCommand[cmd] = 0;
+                            }
+                            errorsByCommand[cmd] += cmdData.errors;
+                        }
+                    }
+                }
+            }
+            
+            const topErrorCommands = Object.entries(errorsByCommand)
+                .map(([name, count]) => ({ name, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 5);
+            
+            res.json({
+                success: true,
+                data: {
+                    labels,
+                    errors,
+                    topErrorCommands,
+                    totalErrors: metrics.totals.errors
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting error metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/response-times
+     * Returns response time statistics
+     * Query params: days (default 7)
+     */
+    router.get('/metrics/response-times', (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const days = parseInt(req.query.days, 10) || 7;
+            const metrics = metricsStorage.loadMetrics();
+            
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const cutoffKey = cutoff.toISOString().split('T')[0];
+            
+            const labels = [];
+            const avgTimes = [];
+            const byCommand = {};
+            
+            for (const [date, data] of Object.entries(metrics.daily)) {
+                if (date >= cutoffKey) {
+                    labels.push(date.slice(5));
+                    
+                    let totalMs = 0;
+                    let totalCount = 0;
+                    
+                    for (const [cmd, cmdData] of Object.entries(data.commands || {})) {
+                        if (cmdData.totalResponseMs && cmdData.count) {
+                            totalMs += cmdData.totalResponseMs;
+                            totalCount += cmdData.count;
+                            
+                            if (!byCommand[cmd]) {
+                                byCommand[cmd] = { totalMs: 0, count: 0 };
+                            }
+                            byCommand[cmd].totalMs += cmdData.totalResponseMs;
+                            byCommand[cmd].count += cmdData.count;
+                        }
+                    }
+                    
+                    avgTimes.push(totalCount > 0 ? Math.round(totalMs / totalCount) : 0);
+                }
+            }
+            
+            const commandAvgTimes = Object.entries(byCommand)
+                .map(([name, data]) => ({
+                    name,
+                    avgMs: data.count > 0 ? Math.round(data.totalMs / data.count) : 0,
+                    count: data.count
+                }))
+                .sort((a, b) => b.avgMs - a.avgMs)
+                .slice(0, 10);
+            
+            res.json({
+                success: true,
+                data: {
+                    labels,
+                    avgTimes,
+                    byCommand: commandAvgTimes
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting response time metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== CACHE AND API HEALTH ENDPOINTS ====================
+
+    /**
+     * GET /api/cache/stats
+     * Returns cache statistics
+     */
+    router.get('/cache/stats', (req, res) => {
+        try {
+            const apiCache = require('../../utils/apiCache');
+            res.json({
+                success: true,
+                data: apiCache.getStats()
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/cache/clear
+     * Clears the cache
+     * Query params: pattern (optional) - pattern to match for selective clearing
+     */
+    router.post('/cache/clear', (req, res) => {
+        try {
+            const apiCache = require('../../utils/apiCache');
+            const { pattern } = req.body;
+            
+            if (pattern) {
+                const removed = apiCache.invalidate(pattern);
+                logger.info('Cache invalidated by pattern', { pattern, removed });
+                res.json({
+                    success: true,
+                    message: `${removed} entradas removidas do cache`
+                });
+            } else {
+                apiCache.clear();
+                logger.info('Cache cleared by admin');
+                res.json({
+                    success: true,
+                    message: 'Cache limpo com sucesso'
+                });
+            }
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/cache/reset-stats
+     * Resets cache statistics
+     */
+    router.post('/cache/reset-stats', (req, res) => {
+        try {
+            const apiCache = require('../../utils/apiCache');
+            apiCache.resetStats();
+            logger.info('Cache stats reset by admin');
+            res.json({
+                success: true,
+                message: 'Estatísticas do cache resetadas'
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/apis/health
+     * Returns detailed health status of all external APIs
+     */
+    router.get('/apis/health', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            res.json({
+                success: true,
+                data: apiHealthCheck.getAllStatus()
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/apis/:name/reset
+     * Resets health status for a specific API
+     */
+    router.post('/apis/:name/reset', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            const { name } = req.params;
+            
+            apiHealthCheck.resetStatus(name);
+            logger.info('API health reset by admin', { api: name });
+            res.json({
+                success: true,
+                message: `Status da API ${name} resetado`
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/apis/reset-all
+     * Resets health status for all APIs
+     */
+    router.post('/apis/reset-all', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            apiHealthCheck.resetAllStats();
+            logger.info('All API health stats reset by admin');
+            res.json({
+                success: true,
+                message: 'Status de todas as APIs resetado'
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== LEGACY WHITELIST ENDPOINTS (backwards compatibility) ====================
 
     /**
@@ -1427,6 +2077,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             partyStorage.saveParties(data);
             
             logger.info('Party cancelled by admin', { partyId: id });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.PARTY_CANCEL,
+                req,
+                target: auditLogger.createTarget('party', id, party.instanceName),
+                details: { instanceName: party.instanceName, participants: party.participants?.length }
+            });
             
             res.json({ 
                 success: true, 
@@ -1496,6 +2152,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             }
             
             logger.info('Participant removed by admin', { partyId, userId });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.PARTY_REMOVE_PARTICIPANT,
+                req,
+                target: auditLogger.createTarget('party', partyId),
+                details: { userId }
+            });
             
             // Try to update the Discord message
             try {
@@ -1588,6 +2250,465 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 templates: partyStorage.INSTANCE_TEMPLATES
             }
         });
+    });
+
+    // ==================== PLUGIN ROUTES ====================
+    
+    // Lazy load plugin service
+    const pluginService = require('../../services/pluginService');
+    const pluginStorage = require('../../utils/pluginStorage');
+
+    /**
+     * GET /api/plugins
+     * Returns list of installed plugins
+     */
+    router.get('/plugins', (req, res) => {
+        try {
+            const installedPlugins = pluginStorage.getInstalledPluginsInfo();
+            const loadedPlugins = pluginService.getLoadedPlugins();
+            
+            // Merge information
+            const plugins = installedPlugins.map(installed => {
+                const loaded = loadedPlugins.find(l => l.name === installed.name);
+                return {
+                    ...installed,
+                    loaded: !!loaded,
+                    enabled: loaded?.enabled || false,
+                    loadedAt: loaded?.loadedAt || null,
+                    enabledAt: loaded?.enabledAt || null,
+                    hasEvents: loaded?.hasEvents || false
+                };
+            });
+            
+            res.json({
+                success: true,
+                data: plugins
+            });
+        } catch (error) {
+            logger.error('Error fetching plugins', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/plugins/:name
+     * Returns details of a specific plugin
+     */
+    router.get('/plugins/:name', (req, res) => {
+        try {
+            const { name } = req.params;
+            const info = pluginService.getPluginInfo(name);
+            
+            if (!info) {
+                return res.status(404).json({ success: false, error: 'Plugin não encontrado' });
+            }
+            
+            res.json({
+                success: true,
+                data: info
+            });
+        } catch (error) {
+            logger.error('Error fetching plugin info', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/:name/enable
+     * Enables a plugin
+     */
+    router.post('/plugins/:name/enable', (req, res) => {
+        try {
+            const { name } = req.params;
+            const result = pluginService.enablePlugin(name);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            // Clear commands cache to include new plugin commands
+            const deployService = require('../../services/deployService');
+            deployService.clearCommandsCache();
+            
+            res.json({
+                success: true,
+                message: `Plugin ${name} ativado com sucesso`
+            });
+        } catch (error) {
+            logger.error('Error enabling plugin', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/:name/disable
+     * Disables a plugin
+     */
+    router.post('/plugins/:name/disable', (req, res) => {
+        try {
+            const { name } = req.params;
+            const result = pluginService.disablePlugin(name);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            // Clear commands cache to remove plugin commands
+            const deployService = require('../../services/deployService');
+            deployService.clearCommandsCache();
+            
+            res.json({
+                success: true,
+                message: `Plugin ${name} desativado com sucesso`
+            });
+        } catch (error) {
+            logger.error('Error disabling plugin', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/:name/reload
+     * Reloads a plugin (hot-reload)
+     */
+    router.post('/plugins/:name/reload', (req, res) => {
+        try {
+            const { name } = req.params;
+            const result = pluginService.reloadPlugin(name);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            // Clear commands cache
+            const deployService = require('../../services/deployService');
+            deployService.clearCommandsCache();
+            
+            res.json({
+                success: true,
+                message: `Plugin ${name} recarregado com sucesso`
+            });
+        } catch (error) {
+            logger.error('Error reloading plugin', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/plugins/:name/config
+     * Updates a plugin's configuration
+     */
+    router.put('/plugins/:name/config', (req, res) => {
+        try {
+            const { name } = req.params;
+            const { config } = req.body;
+            
+            if (!config || typeof config !== 'object') {
+                return res.status(400).json({ success: false, error: 'Configuração inválida' });
+            }
+            
+            const result = pluginService.updatePluginConfig(name, config);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            res.json({
+                success: true,
+                message: `Configuração do plugin ${name} atualizada`
+            });
+        } catch (error) {
+            logger.error('Error updating plugin config', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== AUDIT LOG ROUTES ====================
+
+    /**
+     * GET /api/audit
+     * Returns audit log entries with filters
+     * Query params: type, action, actorId, dateFrom, dateTo, limit, offset
+     */
+    router.get('/audit', (req, res) => {
+        try {
+            const { type, action, actorId, actorType, dateFrom, dateTo, success, limit, offset } = req.query;
+            
+            const filters = {};
+            if (type) filters.type = type;
+            if (action) filters.action = action;
+            if (actorId) filters.actorId = actorId;
+            if (actorType) filters.actorType = actorType;
+            if (dateFrom) filters.dateFrom = dateFrom;
+            if (dateTo) filters.dateTo = dateTo;
+            if (success !== undefined) filters.success = success === 'true';
+            if (limit) filters.limit = parseInt(limit, 10);
+            if (offset) filters.offset = parseInt(offset, 10);
+            
+            const result = auditLogger.queryEntries(filters);
+            
+            res.json({
+                success: true,
+                data: result.entries,
+                pagination: {
+                    total: result.total,
+                    limit: result.limit,
+                    offset: result.offset
+                }
+            });
+        } catch (error) {
+            logger.error('Error fetching audit log', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/audit/stats
+     * Returns audit log statistics
+     * Query params: days (default: 7)
+     */
+    router.get('/audit/stats', (req, res) => {
+        try {
+            const days = parseInt(req.query.days, 10) || 7;
+            const stats = auditLogger.getStats(days);
+            
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error fetching audit stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/audit/export
+     * Exports audit log entries
+     * Query params: format (json|csv), type, action, dateFrom, dateTo
+     */
+    router.get('/audit/export', (req, res) => {
+        try {
+            const { format, type, action, dateFrom, dateTo } = req.query;
+            
+            const filters = {};
+            if (type) filters.type = type;
+            if (action) filters.action = action;
+            if (dateFrom) filters.dateFrom = dateFrom;
+            if (dateTo) filters.dateTo = dateTo;
+            
+            const exportFormat = format === 'csv' ? 'csv' : 'json';
+            const data = auditLogger.exportEntries(filters, exportFormat);
+            
+            const filename = `audit-log-${new Date().toISOString().split('T')[0]}.${exportFormat}`;
+            const contentType = exportFormat === 'csv' ? 'text/csv' : 'application/json';
+            
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(data);
+        } catch (error) {
+            logger.error('Error exporting audit log', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/audit/cleanup
+     * Cleans up old audit entries
+     * Query params: days (default: 30)
+     */
+    router.delete('/audit/cleanup', (req, res) => {
+        try {
+            const days = parseInt(req.query.days, 10) || 30;
+            const result = auditLogger.cleanupOldEntries(days);
+            
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.AUDIT_CLEANUP,
+                req,
+                target: auditLogger.createTarget('audit', 'cleanup'),
+                details: { days, ...result }
+            });
+            
+            res.json({
+                success: true,
+                data: result,
+                message: `Limpeza concluída: ${result.entriesRemoved} entradas e ${result.filesRemoved} arquivos removidos`
+            });
+        } catch (error) {
+            logger.error('Error cleaning up audit log', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== BACKUP ROUTES ====================
+
+    /**
+     * GET /api/backups
+     * Returns list of available backups
+     */
+    router.get('/backups', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const status = backupService.getStatus();
+            
+            res.json({
+                success: true,
+                data: status
+            });
+        } catch (error) {
+            logger.error('Error getting backups', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/backups/create
+     * Creates a new backup manually
+     */
+    router.post('/backups/create', async (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const result = await backupService.forceBackup();
+            
+            logger.info('Manual backup created by admin', { filename: result.filename });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.BACKUP_CREATE,
+                req,
+                target: auditLogger.createTarget('backup', result.filename),
+                details: { size: result.sizeFormatted, files: result.filesIncluded?.length }
+            });
+            
+            res.json({
+                success: true,
+                data: result,
+                message: result.skipped 
+                    ? 'Backup já existe para hoje'
+                    : `Backup criado: ${result.filename}`
+            });
+        } catch (error) {
+            logger.error('Error creating backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/backups/:filename/restore
+     * Restores a backup
+     */
+    router.post('/backups/:filename/restore', async (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const { filename } = req.params;
+            
+            const result = await backupService.restoreBackup(filename);
+            
+            logger.info('Backup restored by admin', { filename, files: result.filesRestored?.length });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.BACKUP_RESTORE,
+                req,
+                target: auditLogger.createTarget('backup', filename),
+                details: { 
+                    filesRestored: result.filesRestored?.length,
+                    errors: result.errors?.length,
+                    preRestoreBackup: result.preRestoreBackup
+                }
+            });
+            
+            res.json({
+                success: result.success,
+                data: result,
+                message: result.success 
+                    ? `Backup restaurado: ${result.filesRestored.length} arquivos`
+                    : `Restauração parcial: ${result.errors.length} erros`
+            });
+        } catch (error) {
+            logger.error('Error restoring backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/backups/:filename
+     * Deletes a specific backup
+     */
+    router.delete('/backups/:filename', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const { filename } = req.params;
+            
+            const deleted = backupService.deleteBackup(filename);
+            
+            if (deleted) {
+                logger.info('Backup deleted by admin', { filename });
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.BACKUP_DELETE,
+                    req,
+                    target: auditLogger.createTarget('backup', filename)
+                });
+                
+                res.json({
+                    success: true,
+                    message: `Backup ${filename} removido`
+                });
+            } else {
+                res.status(404).json({ 
+                    success: false, 
+                    error: 'Backup não encontrado' 
+                });
+            }
+        } catch (error) {
+            logger.error('Error deleting backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/backups/cleanup
+     * Removes old backups beyond retention limit
+     */
+    router.post('/backups/cleanup', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const result = backupService.cleanupOldBackups();
+            
+            logger.info('Backup cleanup by admin', { removed: result.removed });
+            
+            res.json({
+                success: true,
+                data: result,
+                message: `${result.removed} backup(s) antigo(s) removido(s)`
+            });
+        } catch (error) {
+            logger.error('Error cleaning up backups', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/backups/:filename/download
+     * Downloads a backup file
+     */
+    router.get('/backups/:filename/download', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const path = require('path');
+            const { filename } = req.params;
+            
+            const backups = backupService.listBackups();
+            const backup = backups.find(b => b.filename === filename);
+            
+            if (!backup) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Backup não encontrado' 
+                });
+            }
+            
+            res.download(backup.filepath, filename);
+        } catch (error) {
+            logger.error('Error downloading backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
     });
 
     // ==================== BOT UPDATE ROUTES ====================

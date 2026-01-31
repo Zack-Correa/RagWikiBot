@@ -558,7 +558,7 @@ function parseMonsterSearchBodyResponse(searchedWord, response, language = 'pt')
                 
                 const mvpCheckPromises = tempMonsters.map(async (monster) => {
                     try {
-                        const monsterData = await divinePride.monsterSearch(monster.id, server);
+                        const monsterData = await divinePride.monsterSearch(monster.id, language);
                         const isMvp = monsterData?.stats?.mvp === 1;
                         return { id: monster.id, isMvp };
                     } catch {

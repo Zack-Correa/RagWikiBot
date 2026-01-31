@@ -1,0 +1,9 @@
+{
+    "name": "metrics",
+    "version": "1.0.0",
+    "description": "Sistema de coleta e análise de métricas de uso do bot",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": [],
+    "dependencies": []
+}

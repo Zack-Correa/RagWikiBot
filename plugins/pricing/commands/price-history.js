@@ -5,12 +5,10 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const priceHistoryStorage = require('../utils/priceHistoryStorage');
-const gnjoy = require('../integrations/database/gnjoy');
-const logger = require('../utils/logger');
-
-// Servers to query
-const SERVERS = ['FREYA', 'NIDHOGG', 'YGGDRASIL'];
+const priceHistoryStorage = require('../../../utils/priceHistoryStorage');
+const gnjoy = require('../../../integrations/database/gnjoy');
+const logger = require('../../../utils/logger');
+const { getServerChoices, getStoreTypeChoices, SERVERS } = require('../../../utils/commandHelpers');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -26,18 +24,13 @@ module.exports = {
                 .setRequired(false)
                 .addChoices(
                     { name: 'Todos', value: 'ALL' },
-                    { name: 'Freya', value: 'FREYA' },
-                    { name: 'Nidhogg', value: 'NIDHOGG' },
-                    { name: 'Yggdrasil', value: 'YGGDRASIL' }
+                    ...getServerChoices()
                 ))
         .addStringOption(option =>
             option.setName('tipo')
                 .setDescription('Tipo de transação')
                 .setRequired(false)
-                .addChoices(
-                    { name: 'Comprando', value: 'BUY' },
-                    { name: 'Vendendo', value: 'SELL' }
-                )),
+                .addChoices(...getStoreTypeChoices())),
     
     async execute(interaction) {
         await interaction.deferReply();
@@ -98,7 +91,7 @@ module.exports = {
                         inline: true
                     }, {
                         name: '📊 Tipo',
-                        value: storeType === 'BUY' ? 'Comprando' : 'Vendendo',
+                        value: gnjoy.getStoreTypeLabel(storeType),
                         inline: true
                     })
                     .setFooter({ text: 'BeeWiki • Histórico de Preços' })
@@ -213,7 +206,7 @@ module.exports = {
                     `• **Total de anúncios:** ${totalListings}`,
                     `• **Itens únicos:** ${items.length}`,
                     `• **Servidores:** ${serversToQuery.join(', ')}`,
-                    `• **Tipo:** ${storeType === 'BUY' ? '🛒 Comprando' : '💰 Vendendo'}`
+                    `• **Tipo:** ${storeType === 'BUY' ? '🛒' : '💰'} ${gnjoy.getStoreTypeLabel(storeType)}`
                 ].join('\n'),
                 inline: false
             });
@@ -319,7 +312,7 @@ async function showStoredHistory(interaction, searchTerm, storedItems, server, s
                 if (priceData.length === 0) continue;
                 if (storeType && type !== storeType) continue;
                 
-                const typeLabel = type === 'BUY' ? '🛒 Comprando' : '💰 Vendendo';
+                const typeLabel = type === 'BUY' ? `🛒 ${gnjoy.getStoreTypeLabel(type)}` : `💰 ${gnjoy.getStoreTypeLabel(type)}`;
                 
                 // Calculate statistics
                 const allPrices = priceData.flatMap(d => [d.min, d.max]);

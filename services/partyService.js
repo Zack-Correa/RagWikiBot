@@ -8,6 +8,7 @@ const logger = require('../utils/logger');
 
 let discordClient = null;
 let checkInterval = null;
+let cleanupInterval = null;
 const CHECK_INTERVAL_MS = 60000; // Check every minute
 
 /**
@@ -21,7 +22,7 @@ function initialize(client) {
     startScheduler();
     
     // Cleanup old parties daily
-    setInterval(() => {
+    cleanupInterval = setInterval(() => {
         partyStorage.cleanupOldParties();
     }, 24 * 60 * 60 * 1000);
     
@@ -49,6 +50,10 @@ function stopScheduler() {
     if (checkInterval) {
         clearInterval(checkInterval);
         checkInterval = null;
+    }
+    if (cleanupInterval) {
+        clearInterval(cleanupInterval);
+        cleanupInterval = null;
     }
 }
 

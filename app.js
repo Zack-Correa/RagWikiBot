@@ -5,8 +5,8 @@
 
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const InteractionHandler = require('./handlers/interactionHandler');
-const marketAlertService = require('./services/marketAlertService');
-const partyService = require('./services/partyService');
+const pluginService = require('./services/pluginService');
+const errorAlertService = require('./services/errorAlertService');
 const webServer = require('./web/server');
 const config = require('./config');
 const logger = require('./utils/logger');
@@ -47,14 +47,14 @@ const handleReady = () => {
         status: 'online'
     });
 
-    // Initialize and start the market alert service
-    marketAlertService.initialize(client);
-    marketAlertService.start();
-    logger.info('Market alert service started');
-
-    // Initialize party service for instance groups
-    partyService.initialize(client);
-    logger.info('Party service started');
+    // Initialize plugin service (handles all optional features)
+    pluginService.setClient(client);
+    pluginService.initialize();
+    logger.info('Plugin service started');
+    
+    // Initialize error alert service
+    errorAlertService.setClient(client);
+    logger.info('Error alert service started');
 
     // Start admin web panel if password is configured
     const adminPort = process.env.ADMIN_PORT || 3000;
@@ -102,16 +102,14 @@ process.on('uncaughtException', (error) => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     logger.info('Received SIGINT, shutting down gracefully...');
-    marketAlertService.stop();
-    partyService.shutdown();
+    pluginService.shutdown();
     client.destroy();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     logger.info('Received SIGTERM, shutting down gracefully...');
-    marketAlertService.stop();
-    partyService.shutdown();
+    pluginService.shutdown();
     client.destroy();
     process.exit(0);
 });

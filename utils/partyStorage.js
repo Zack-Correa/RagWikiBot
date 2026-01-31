@@ -558,6 +558,227 @@ function getStats() {
     };
 }
 
+// ==================== LOOT SYSTEM ====================
+
+/**
+ * Adds an item to party loot
+ * @param {string} partyId - Party ID
+ * @param {string} itemName - Item name
+ * @param {string} userId - User who added the item
+ * @returns {Object} Result { success, error, party, item }
+ */
+function addLoot(partyId, itemName, userId) {
+    const data = loadParties();
+    const party = data.parties.find(p => p.id === partyId);
+    
+    if (!party) {
+        return { success: false, error: 'Grupo não encontrado' };
+    }
+    
+    if (party.creatorId !== userId) {
+        return { success: false, error: 'Apenas o líder pode adicionar itens ao loot' };
+    }
+    
+    if (!party.loot) {
+        party.loot = [];
+    }
+    
+    const item = {
+        id: `loot_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+        name: itemName.trim(),
+        addedBy: userId,
+        addedAt: new Date().toISOString(),
+        winner: null,
+        rolledAt: null
+    };
+    
+    party.loot.push(item);
+    saveParties(data);
+    
+    logger.info('Loot item added', { partyId, itemName, userId });
+    
+    return { success: true, party, item };
+}
+
+/**
+ * Removes an item from party loot
+ * @param {string} partyId - Party ID
+ * @param {number} itemIndex - Index of the item to remove
+ * @param {string} userId - User requesting removal
+ * @returns {Object} Result { success, error, party, removedItem }
+ */
+function removeLoot(partyId, itemIndex, userId) {
+    const data = loadParties();
+    const party = data.parties.find(p => p.id === partyId);
+    
+    if (!party) {
+        return { success: false, error: 'Grupo não encontrado' };
+    }
+    
+    if (party.creatorId !== userId) {
+        return { success: false, error: 'Apenas o líder pode remover itens do loot' };
+    }
+    
+    if (!party.loot || party.loot.length === 0) {
+        return { success: false, error: 'Não há itens no loot' };
+    }
+    
+    if (itemIndex < 0 || itemIndex >= party.loot.length) {
+        return { success: false, error: 'Item não encontrado' };
+    }
+    
+    const removedItem = party.loot.splice(itemIndex, 1)[0];
+    saveParties(data);
+    
+    logger.info('Loot item removed', { partyId, itemName: removedItem.name, userId });
+    
+    return { success: true, party, removedItem };
+}
+
+/**
+ * Rolls a single loot item among party participants
+ * @param {string} partyId - Party ID
+ * @param {number} itemIndex - Index of the item to roll
+ * @param {string} userId - User requesting the roll
+ * @returns {Object} Result { success, error, party, item, winner }
+ */
+function rollLootItem(partyId, itemIndex, userId) {
+    const data = loadParties();
+    const party = data.parties.find(p => p.id === partyId);
+    
+    if (!party) {
+        return { success: false, error: 'Grupo não encontrado' };
+    }
+    
+    if (party.creatorId !== userId) {
+        return { success: false, error: 'Apenas o líder pode sortear itens' };
+    }
+    
+    if (!party.loot || party.loot.length === 0) {
+        return { success: false, error: 'Não há itens no loot' };
+    }
+    
+    if (itemIndex < 0 || itemIndex >= party.loot.length) {
+        return { success: false, error: 'Item não encontrado' };
+    }
+    
+    if (party.participants.length === 0) {
+        return { success: false, error: 'Não há participantes para o sorteio' };
+    }
+    
+    const item = party.loot[itemIndex];
+    
+    if (item.winner) {
+        return { success: false, error: `Este item já foi sorteado para ${item.winner.userName}` };
+    }
+    
+    // Random selection
+    const winnerIndex = Math.floor(Math.random() * party.participants.length);
+    const winner = party.participants[winnerIndex];
+    
+    item.winner = {
+        userId: winner.userId,
+        userName: winner.userName
+    };
+    item.rolledAt = new Date().toISOString();
+    
+    saveParties(data);
+    
+    logger.info('Loot item rolled', { partyId, itemName: item.name, winner: winner.userId });
+    
+    return { success: true, party, item, winner };
+}
+
+/**
+ * Rolls all unrolled loot items
+ * @param {string} partyId - Party ID
+ * @param {string} userId - User requesting the roll
+ * @returns {Object} Result { success, error, party, results }
+ */
+function rollAllLoot(partyId, userId) {
+    const data = loadParties();
+    const party = data.parties.find(p => p.id === partyId);
+    
+    if (!party) {
+        return { success: false, error: 'Grupo não encontrado' };
+    }
+    
+    if (party.creatorId !== userId) {
+        return { success: false, error: 'Apenas o líder pode sortear itens' };
+    }
+    
+    if (!party.loot || party.loot.length === 0) {
+        return { success: false, error: 'Não há itens no loot' };
+    }
+    
+    if (party.participants.length === 0) {
+        return { success: false, error: 'Não há participantes para o sorteio' };
+    }
+    
+    const unrolled = party.loot.filter(item => !item.winner);
+    
+    if (unrolled.length === 0) {
+        return { success: false, error: 'Todos os itens já foram sorteados' };
+    }
+    
+    const results = [];
+    
+    for (const item of unrolled) {
+        const winnerIndex = Math.floor(Math.random() * party.participants.length);
+        const winner = party.participants[winnerIndex];
+        
+        item.winner = {
+            userId: winner.userId,
+            userName: winner.userName
+        };
+        item.rolledAt = new Date().toISOString();
+        
+        results.push({ item, winner });
+    }
+    
+    saveParties(data);
+    
+    logger.info('All loot rolled', { partyId, itemCount: results.length });
+    
+    return { success: true, party, results };
+}
+
+/**
+ * Gets loot for a party
+ * @param {string} partyId - Party ID
+ * @returns {Array|null} Loot array or null
+ */
+function getLoot(partyId) {
+    const party = getParty(partyId);
+    return party?.loot || [];
+}
+
+/**
+ * Clears all loot from a party
+ * @param {string} partyId - Party ID
+ * @param {string} userId - User requesting clear
+ * @returns {Object} Result
+ */
+function clearLoot(partyId, userId) {
+    const data = loadParties();
+    const party = data.parties.find(p => p.id === partyId);
+    
+    if (!party) {
+        return { success: false, error: 'Grupo não encontrado' };
+    }
+    
+    if (party.creatorId !== userId) {
+        return { success: false, error: 'Apenas o líder pode limpar o loot' };
+    }
+    
+    party.loot = [];
+    saveParties(data);
+    
+    logger.info('Loot cleared', { partyId, userId });
+    
+    return { success: true, party };
+}
+
 module.exports = {
     CLASSES,
     INSTANCE_TEMPLATES,
@@ -577,5 +798,12 @@ module.exports = {
     getStats,
     updateClassLimits,
     getClassCounts,
-    getAvailableClasses
+    getAvailableClasses,
+    // Loot system
+    addLoot,
+    removeLoot,
+    rollLootItem,
+    rollAllLoot,
+    getLoot,
+    clearLoot
 };

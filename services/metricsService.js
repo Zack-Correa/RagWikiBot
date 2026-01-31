@@ -1,36 +1,59 @@
 /**
- * Metrics Service
- * Provides a simple interface for recording and retrieving bot metrics
+ * Metrics Service Facade
+ * Delegates to the metrics plugin when enabled, otherwise does nothing
+ * This allows the core to use metrics without hard dependency on the plugin
  */
 
-const metricsStorage = require('../utils/metricsStorage');
+const path = require('path');
 const logger = require('../utils/logger');
+
+// Cache for plugin module
+let metricsPlugin = null;
+let pluginChecked = false;
+
+/**
+ * Gets the metrics plugin if available and enabled
+ * @returns {Object|null} Plugin API or null
+ */
+function getMetricsPlugin() {
+    if (!pluginChecked) {
+        pluginChecked = true;
+        try {
+            // Try to load the plugin directly
+            const pluginPath = path.join(__dirname, '..', 'plugins', 'metrics', 'index.js');
+            metricsPlugin = require(pluginPath);
+        } catch (e) {
+            // Plugin not installed
+            metricsPlugin = null;
+        }
+    }
+    return metricsPlugin;
+}
+
+/**
+ * Resets the plugin cache (call when plugins are reloaded)
+ */
+function resetPluginCache() {
+    pluginChecked = false;
+    metricsPlugin = null;
+    
+    // Clear require cache
+    try {
+        const pluginPath = path.join(__dirname, '..', 'plugins', 'metrics', 'index.js');
+        delete require.cache[require.resolve(pluginPath)];
+    } catch (e) {
+        // Ignore
+    }
+}
 
 /**
  * Records a command execution with timing
  * @param {Object} params - Parameters
- * @param {string} params.command - Command name
- * @param {string} params.userId - User ID
- * @param {string} [params.guildId] - Guild ID
- * @param {number} params.startTime - Start timestamp from Date.now()
- * @param {boolean} [params.error] - Whether command errored
  */
-function recordCommandExecution({ command, userId, guildId, startTime, error = false }) {
-    try {
-        const responseTime = Date.now() - startTime;
-        
-        metricsStorage.recordCommand({
-            command,
-            userId,
-            guildId,
-            responseTime,
-            error
-        });
-        
-        logger.debug('Metrics recorded', { command, responseTime, error });
-    } catch (err) {
-        // Don't let metrics errors affect bot functionality
-        logger.error('Error recording metrics', { error: err.message });
+function recordCommandExecution(params) {
+    const plugin = getMetricsPlugin();
+    if (plugin?.api?.recordCommandExecution) {
+        plugin.api.recordCommandExecution(params);
     }
 }
 
@@ -39,7 +62,15 @@ function recordCommandExecution({ command, userId, guildId, startTime, error = f
  * @returns {Object} Dashboard stats
  */
 function getDashboardStats() {
-    return metricsStorage.getDashboardStats();
+    const plugin = getMetricsPlugin();
+    if (plugin?.api?.getDashboardStats) {
+        return plugin.api.getDashboardStats();
+    }
+    return {
+        today: { totalCommands: 0, totalErrors: 0, uniqueUsers: 0, topCommands: [] },
+        totals: { commands: 0, errors: 0, uniqueUsers: 0 },
+        lastUpdated: null
+    };
 }
 
 /**
@@ -48,39 +79,14 @@ function getDashboardStats() {
  * @returns {Object} Chart-ready data
  */
 function getChartData(days = 7) {
-    const range = metricsStorage.getMetricsRange(days);
-    
-    // Prepare data for charts
-    const labels = [];
-    const commandCounts = [];
-    const errorCounts = [];
-    const userCounts = [];
-    
-    // Get all dates in range
-    const dates = Object.keys(range.daily).sort();
-    
-    for (const date of dates) {
-        const dayData = range.daily[date];
-        labels.push(date.slice(5)); // MM-DD format
-        commandCounts.push(dayData.totalCommands);
-        errorCounts.push(dayData.totalErrors);
-        userCounts.push(dayData.uniqueUsers);
+    const plugin = getMetricsPlugin();
+    if (plugin?.api?.getChartData) {
+        return plugin.api.getChartData(days);
     }
-    
-    // Top commands
-    const topCommands = Object.entries(range.commands)
-        .map(([name, data]) => ({ name, ...data }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10);
-    
     return {
-        labels,
-        datasets: {
-            commands: commandCounts,
-            errors: errorCounts,
-            users: userCounts
-        },
-        topCommands
+        labels: [],
+        datasets: { commands: [], errors: [], users: [] },
+        topCommands: []
     };
 }
 
@@ -89,19 +95,11 @@ function getChartData(days = 7) {
  * @returns {Object} Hourly data
  */
 function getHourlyDistribution() {
-    const hourly = metricsStorage.getHourlyToday();
-    
-    const labels = [];
-    const counts = [];
-    
-    // Fill all 24 hours
-    for (let h = 0; h < 24; h++) {
-        const hourStr = String(h).padStart(2, '0');
-        labels.push(`${hourStr}:00`);
-        counts.push(hourly[hourStr]?.totalCommands || 0);
+    const plugin = getMetricsPlugin();
+    if (plugin?.api?.getHourlyDistribution) {
+        return plugin.api.getHourlyDistribution();
     }
-    
-    return { labels, counts };
+    return { labels: [], counts: [] };
 }
 
 /**
@@ -111,14 +109,38 @@ function getHourlyDistribution() {
  * @returns {Object} Command stats
  */
 function getCommandStats(command, days = 30) {
-    return metricsStorage.getCommandStats(command, days);
+    const plugin = getMetricsPlugin();
+    if (plugin?.api?.getCommandStats) {
+        return plugin.api.getCommandStats(command, days);
+    }
+    return {
+        command,
+        days,
+        totalCount: 0,
+        totalErrors: 0,
+        avgResponseMs: 0,
+        errorRate: 0,
+        dailyData: []
+    };
 }
 
 /**
  * Resets all metrics (admin only)
  */
 function resetMetrics() {
-    metricsStorage.resetMetrics();
+    const plugin = getMetricsPlugin();
+    if (plugin?.api?.resetMetrics) {
+        plugin.api.resetMetrics();
+    }
+}
+
+/**
+ * Check if metrics collection is enabled
+ * @returns {boolean} Whether metrics are being collected
+ */
+function isEnabled() {
+    const plugin = getMetricsPlugin();
+    return plugin?.api?.isEnabled?.() || false;
 }
 
 module.exports = {
@@ -127,5 +149,7 @@ module.exports = {
     getChartData,
     getHourlyDistribution,
     getCommandStats,
-    resetMetrics
+    resetMetrics,
+    resetPluginCache,
+    isEnabled
 };

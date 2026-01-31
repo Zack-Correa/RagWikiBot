@@ -13,6 +13,12 @@ const navLinks = document.querySelectorAll('.nav-link[data-section]');
 // Charts
 let commandsChart = null;
 let hourlyChart = null;
+let errorsChart = null;
+let responseTimesChart = null;
+let pieChart = null;
+
+// Metrics state
+let currentMetricsDays = 7;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -26,6 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initNews();
     initDeploy();
     initLogs();
+    initAudit();
+    initPlugins();
     
     // Load initial data
     loadStats();
@@ -36,6 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadNews();
     loadDeployStatus();
     loadLogs();
+    loadAuditStats();
+    loadAuditEntries();
+    loadPlugins();
     
     // Auto-refresh stats every 30 seconds
     setInterval(loadStats, 30000);
@@ -103,17 +114,24 @@ async function loadStats() {
             
             serviceRunning = data.running;
             const statusEl = document.getElementById('stat-service-status');
+            const serviceBadge = document.getElementById('service-badge');
+            
             statusEl.textContent = data.running ? 'Ativo' : 'Parado';
             statusEl.style.color = data.running ? '#3BA55C' : '#ED4245';
             
+            if (serviceBadge) {
+                serviceBadge.textContent = data.running ? 'Ativo' : 'Parado';
+                serviceBadge.className = `dash-card-badge ${data.running ? 'active' : 'inactive'}`;
+            }
+            
             // Update toggle button
             const toggleBtn = document.getElementById('btn-toggle-service');
-            toggleBtn.textContent = data.running ? 'Parar Serviço' : 'Iniciar Serviço';
+            toggleBtn.textContent = data.running ? 'Parar' : 'Iniciar';
             toggleBtn.className = data.running ? 'btn btn-warning' : 'btn btn-success';
             
             // Info
-            document.getElementById('info-interval').textContent = `${data.intervalMinutes} minutos`;
-            document.getElementById('info-cooldown').textContent = `${data.cooldownMinutes} minutos`;
+            document.getElementById('info-interval').textContent = `${data.intervalMinutes} min`;
+            document.getElementById('info-cooldown').textContent = `${data.cooldownMinutes} min`;
             
             if (data.lastCheck) {
                 const date = new Date(data.lastCheck);
@@ -122,9 +140,56 @@ async function loadStats() {
                 document.getElementById('info-last-check').textContent = 'Nunca';
             }
         }
+        
+        // Load quick stats
+        loadQuickStats();
+        
     } catch (error) {
         console.error('Error loading stats:', error);
         showToast('Erro ao carregar estatísticas', 'error');
+    }
+}
+
+async function loadQuickStats() {
+    try {
+        // Load metrics for today's commands
+        const metricsRes = await fetch('/api/metrics/dashboard');
+        if (metricsRes.ok) {
+            const metricsData = await metricsRes.json();
+            if (metricsData.success) {
+                const commandsToday = document.getElementById('dash-commands-today');
+                if (commandsToday) {
+                    commandsToday.textContent = metricsData.data.today?.totalCommands || 0;
+                }
+            }
+        }
+        
+        // Load parties count
+        const partiesRes = await fetch('/api/parties/stats');
+        if (partiesRes.ok) {
+            const partiesData = await partiesRes.json();
+            if (partiesData.success) {
+                const partiesActive = document.getElementById('dash-parties-active');
+                if (partiesActive) {
+                    partiesActive.textContent = partiesData.data.active || 0;
+                }
+            }
+        }
+        
+        // Load plugins count
+        const pluginsRes = await fetch('/api/plugins');
+        if (pluginsRes.ok) {
+            const pluginsData = await pluginsRes.json();
+            if (pluginsData.success) {
+                const pluginsActive = document.getElementById('dash-plugins-active');
+                if (pluginsActive) {
+                    const activeCount = pluginsData.data.filter(p => p.enabled).length;
+                    pluginsActive.textContent = activeCount;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading quick stats:', error);
     }
 }
 
@@ -191,11 +256,10 @@ function renderServerStatus(data) {
     
     const serverHtml = Object.entries(servers).map(([name, status]) => {
         const statusClass = status.online === null ? 'unknown' : (status.online ? 'online' : 'offline');
-        const statusText = status.online === null ? 'Desconhecido' : (status.online ? 'Online' : 'Offline');
         return `
-            <div class="server-status-item">
-                <span class="status-dot ${statusClass}"></span>
-                <span class="server-name">${escapeHtml(name)}</span>
+            <div class="server-card ${statusClass}">
+                <div class="server-status-dot"></div>
+                <div class="server-name">${escapeHtml(name)}</div>
             </div>
         `;
     }).join('');
@@ -210,7 +274,13 @@ function renderServerStatus(data) {
         document.getElementById('server-last-check').textContent = 'Nunca';
     }
     
-    document.getElementById('server-account-address').textContent = data.accountServer || '-';
+    const serverAddress = document.getElementById('server-account-address');
+    if (serverAddress) {
+        // Shorten the address for display
+        const addr = data.accountServer || '-';
+        serverAddress.textContent = addr.length > 30 ? addr.substring(0, 30) + '...' : addr;
+        serverAddress.title = addr;
+    }
 }
 
 async function forceCheckServers() {
@@ -368,6 +438,16 @@ function initMetrics() {
     document.getElementById('btn-refresh-metrics').addEventListener('click', loadMetrics);
     document.getElementById('btn-reset-metrics').addEventListener('click', resetMetrics);
     
+    // Period selector buttons
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentMetricsDays = parseInt(btn.dataset.days, 10);
+            loadMetrics();
+        });
+    });
+    
     // Load metrics when section becomes visible
     navLinks.forEach(link => {
         link.addEventListener('click', () => {
@@ -380,37 +460,63 @@ function initMetrics() {
 
 async function loadMetrics() {
     try {
-        // Load dashboard stats
-        const dashboardRes = await fetch('/api/metrics/dashboard');
-        const dashboardResult = await dashboardRes.json();
+        // Load all metrics data in parallel
+        const [dashboardRes, chartRes, hourlyRes, extendedRes, errorsRes, responseRes] = await Promise.all([
+            fetch('/api/metrics/dashboard'),
+            fetch(`/api/metrics/chart?days=${currentMetricsDays}`),
+            fetch('/api/metrics/hourly'),
+            fetch(`/api/metrics/extended?days=${currentMetricsDays}`),
+            fetch(`/api/metrics/errors?days=${currentMetricsDays}`),
+            fetch(`/api/metrics/response-times?days=${currentMetricsDays}`)
+        ]);
         
-        if (dashboardResult.success) {
-            const data = dashboardResult.data;
-            
-            document.getElementById('metrics-today-commands').textContent = data.today?.totalCommands || 0;
+        const [dashboard, chart, hourly, extended, errors, response] = await Promise.all([
+            dashboardRes.json(),
+            chartRes.json(),
+            hourlyRes.json(),
+            extendedRes.json(),
+            errorsRes.json(),
+            responseRes.json()
+        ]);
+        
+        // Update summary cards
+        if (dashboard.success) {
+            const data = dashboard.data;
+            document.getElementById('metrics-today-commands').textContent = (data.today?.totalCommands || 0).toLocaleString();
             document.getElementById('metrics-today-users').textContent = data.today?.uniqueUsers || 0;
-            document.getElementById('metrics-total-commands').textContent = data.totals?.commands || 0;
+            document.getElementById('metrics-today-errors').textContent = data.today?.totalErrors || 0;
+            document.getElementById('metrics-total-commands').textContent = (data.totals?.commands || 0).toLocaleString();
             document.getElementById('metrics-total-users').textContent = data.totals?.uniqueUsers || 0;
+        }
+        
+        if (extended.success) {
+            document.getElementById('metrics-error-rate').textContent = extended.data.summary.overallErrorRate + '%';
             
-            // Render top commands
-            renderTopCommands(data.today?.topCommands || []);
+            // Render extended data
+            renderTopCommands(extended.data.commands.slice(0, 8));
+            renderCommandPerformanceTable(extended.data.commands);
+            renderHeatmap(extended.data.heatmap);
+            renderTopUsers(extended.data.topUsers);
+            renderCommandsPieChart(extended.data.commands.slice(0, 6));
         }
         
-        // Load chart data
-        const chartRes = await fetch('/api/metrics/chart?days=7');
-        const chartResult = await chartRes.json();
-        
-        if (chartResult.success) {
-            renderCommandsChart(chartResult.data);
+        // Render main charts
+        if (chart.success) {
+            renderCommandsChart(chart.data);
         }
         
-        // Load hourly data
-        const hourlyRes = await fetch('/api/metrics/hourly');
-        const hourlyResult = await hourlyRes.json();
-        
-        if (hourlyResult.success) {
-            renderHourlyChart(hourlyResult.data);
+        if (hourly.success) {
+            renderHourlyChart(hourly.data);
         }
+        
+        if (errors.success) {
+            renderErrorsChart(errors.data);
+        }
+        
+        if (response.success) {
+            renderResponseTimesChart(response.data);
+        }
+        
     } catch (error) {
         console.error('Error loading metrics:', error);
         showToast('Erro ao carregar métricas', 'error');
@@ -420,14 +526,14 @@ async function loadMetrics() {
 function renderTopCommands(commands) {
     const container = document.getElementById('top-commands-grid');
     
-    if (commands.length === 0) {
-        container.innerHTML = '<div class="metrics-empty">Nenhum comando executado ainda hoje</div>';
+    if (!commands || commands.length === 0) {
+        container.innerHTML = '<div class="metrics-empty">Nenhum comando executado ainda</div>';
         return;
     }
     
     container.innerHTML = commands.map((cmd, index) => {
         const rankClass = index < 3 ? `top-${index + 1}` : '';
-        const errorRate = cmd.count > 0 ? ((cmd.errors / cmd.count) * 100).toFixed(1) : 0;
+        const errorRate = cmd.count > 0 ? parseFloat(cmd.errorRate) : 0;
         
         return `
             <div class="command-stat-card">
@@ -435,21 +541,172 @@ function renderTopCommands(commands) {
                 <div class="cmd-info">
                     <div class="cmd-name">/${escapeHtml(cmd.name)}</div>
                     <div class="cmd-stats">
-                        <span>Média: ${cmd.avgResponseMs || 0}ms</span>
-                        ${cmd.errors > 0 ? `<span class="errors">${cmd.errors} erro(s) (${errorRate}%)</span>` : ''}
+                        <span>${cmd.avgResponseMs || 0}ms</span>
+                        ${errorRate > 0 ? `<span class="errors">${errorRate}% erro</span>` : ''}
                     </div>
                 </div>
-                <div class="cmd-count">${cmd.count}</div>
+                <div class="cmd-count">${cmd.count.toLocaleString()}</div>
             </div>
         `;
     }).join('');
+}
+
+function renderCommandPerformanceTable(commands) {
+    const tbody = document.getElementById('command-performance-body');
+    
+    if (!commands || commands.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="loading">Nenhum dado disponível</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = commands.slice(0, 15).map(cmd => {
+        const errorRate = parseFloat(cmd.errorRate) || 0;
+        const errorClass = errorRate < 1 ? 'low' : errorRate < 5 ? 'medium' : 'high';
+        const responseClass = cmd.avgResponseMs < 200 ? 'fast' : cmd.avgResponseMs < 500 ? 'medium' : 'slow';
+        
+        return `
+            <tr>
+                <td><span class="cmd-name">/${escapeHtml(cmd.name)}</span></td>
+                <td>${cmd.count.toLocaleString()}</td>
+                <td>${cmd.errors}</td>
+                <td><span class="error-rate ${errorClass}">${errorRate}%</span></td>
+                <td><span class="response-time ${responseClass}">${cmd.avgResponseMs}ms</span></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderHeatmap(heatmapData) {
+    const container = document.getElementById('heatmap-container');
+    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    
+    if (!heatmapData || Object.keys(heatmapData).length === 0) {
+        container.innerHTML = '<div class="metrics-empty">Dados insuficientes para o mapa de calor</div>';
+        return;
+    }
+    
+    // Find max value for normalization
+    let maxValue = 1;
+    for (const dayData of Object.values(heatmapData)) {
+        for (const count of Object.values(dayData)) {
+            if (count > maxValue) maxValue = count;
+        }
+    }
+    
+    // Build heatmap grid
+    let html = '<div class="heatmap-grid">';
+    
+    // Header row (hours)
+    html += '<div class="heatmap-header"></div>';
+    for (let h = 0; h < 24; h++) {
+        html += `<div class="heatmap-header">${String(h).padStart(2, '0')}</div>`;
+    }
+    
+    // Data rows (days)
+    for (let d = 0; d < 7; d++) {
+        html += `<div class="heatmap-row-label">${dayNames[d]}</div>`;
+        for (let h = 0; h < 24; h++) {
+            const hourKey = String(h).padStart(2, '0');
+            const count = heatmapData[d]?.[hourKey] || 0;
+            const level = count === 0 ? 0 : Math.min(5, Math.ceil((count / maxValue) * 5));
+            html += `<div class="heatmap-cell" data-count="${count}" data-level="${level}" title="${dayNames[d]} ${hourKey}:00 - ${count} comandos"></div>`;
+        }
+    }
+    
+    html += '</div>';
+    
+    // Legend
+    html += `
+        <div class="heatmap-legend">
+            <span>Menos</span>
+            <div class="heatmap-legend-cell" style="background: var(--bg-tertiary);"></div>
+            <div class="heatmap-legend-cell" style="background: rgba(59, 165, 92, 0.3);"></div>
+            <div class="heatmap-legend-cell" style="background: rgba(59, 165, 92, 0.5);"></div>
+            <div class="heatmap-legend-cell" style="background: rgba(59, 165, 92, 0.7);"></div>
+            <div class="heatmap-legend-cell" style="background: var(--success-color);"></div>
+            <span>Mais</span>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+function renderTopUsers(users) {
+    const container = document.getElementById('top-users-list');
+    
+    if (!users || users.length === 0) {
+        container.innerHTML = '<div class="metrics-empty">Nenhum usuário encontrado</div>';
+        return;
+    }
+    
+    container.innerHTML = users.map((user, index) => {
+        const rankClass = index < 3 ? `rank-${index + 1}` : '';
+        const avatarContent = user.avatar 
+            ? `<img src="${user.avatar}" alt="${escapeHtml(user.displayName)}">`
+            : escapeHtml((user.displayName || 'U').charAt(0).toUpperCase());
+        
+        return `
+            <div class="top-user-item">
+                <div class="top-user-rank ${rankClass}">#${index + 1}</div>
+                <div class="top-user-avatar">${avatarContent}</div>
+                <div class="top-user-info">
+                    <div class="top-user-name">${escapeHtml(user.displayName || user.userId)}</div>
+                    <div class="top-user-stats">Primeiro uso: ${user.firstSeen?.slice(5) || '-'} • Último: ${user.lastSeen?.slice(5) || '-'}</div>
+                </div>
+                <div class="top-user-days">${user.days} dias</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCommandsPieChart(commands) {
+    const ctx = document.getElementById('chart-commands-pie');
+    if (!ctx) return;
+    
+    if (pieChart) {
+        pieChart.destroy();
+    }
+    
+    if (!commands || commands.length === 0) {
+        return;
+    }
+    
+    const colors = ['#F5A623', '#3BA55C', '#5865F2', '#EB459E', '#FEE75C', '#57F287'];
+    
+    pieChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: commands.map(c => '/' + c.name),
+            datasets: [{
+                data: commands.map(c => c.count),
+                backgroundColor: colors,
+                borderColor: '#2D2A24',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#FFF8E7',
+                        padding: 10,
+                        font: { size: 11 },
+                        boxWidth: 12,
+                        usePointStyle: true
+                    }
+                }
+            }
+        }
+    });
 }
 
 function renderCommandsChart(data) {
     const ctx = document.getElementById('chart-commands-daily');
     if (!ctx) return;
     
-    // Destroy existing chart
     if (commandsChart) {
         commandsChart.destroy();
     }
@@ -480,23 +737,13 @@ function renderCommandsChart(data) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
             plugins: {
-                legend: {
-                    labels: {
-                        color: '#FFF8E7'
-                    }
-                }
+                legend: { labels: { color: '#FFF8E7' } }
             },
             scales: {
-                x: {
-                    ticks: { color: '#D4C5A9' },
-                    grid: { color: '#4A4639' }
-                },
-                y: {
-                    beginAtZero: true,
-                    ticks: { color: '#D4C5A9' },
-                    grid: { color: '#4A4639' }
-                }
+                x: { ticks: { color: '#D4C5A9' }, grid: { color: '#4A4639' } },
+                y: { beginAtZero: true, ticks: { color: '#D4C5A9' }, grid: { color: '#4A4639' } }
             }
         }
     });
@@ -506,7 +753,6 @@ function renderHourlyChart(data) {
     const ctx = document.getElementById('chart-commands-hourly');
     if (!ctx) return;
     
-    // Destroy existing chart
     if (hourlyChart) {
         hourlyChart.destroy();
     }
@@ -525,25 +771,74 @@ function renderHourlyChart(data) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
+            plugins: { legend: { display: false } },
             scales: {
-                x: {
-                    ticks: { 
-                        color: '#D4C5A9',
-                        maxRotation: 45,
-                        minRotation: 45
-                    },
-                    grid: { display: false }
-                },
-                y: {
-                    beginAtZero: true,
-                    ticks: { color: '#D4C5A9' },
-                    grid: { color: '#4A4639' }
-                }
+                x: { ticks: { color: '#D4C5A9', maxRotation: 45, minRotation: 45 }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: '#D4C5A9' }, grid: { color: '#4A4639' } }
+            }
+        }
+    });
+}
+
+function renderErrorsChart(data) {
+    const ctx = document.getElementById('chart-errors-daily');
+    if (!ctx) return;
+    
+    if (errorsChart) {
+        errorsChart.destroy();
+    }
+    
+    errorsChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                label: 'Erros',
+                data: data.errors,
+                backgroundColor: '#ED4245',
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#D4C5A9' }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: '#D4C5A9' }, grid: { color: '#4A4639' } }
+            }
+        }
+    });
+}
+
+function renderResponseTimesChart(data) {
+    const ctx = document.getElementById('chart-response-times');
+    if (!ctx) return;
+    
+    if (responseTimesChart) {
+        responseTimesChart.destroy();
+    }
+    
+    responseTimesChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                label: 'Tempo Médio (ms)',
+                data: data.avgTimes,
+                borderColor: '#5865F2',
+                backgroundColor: 'rgba(88, 101, 242, 0.1)',
+                fill: true,
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#D4C5A9' }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: '#D4C5A9' }, grid: { color: '#4A4639' } }
             }
         }
     });
@@ -2013,6 +2308,372 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
+// ==================== AUDIT LOG ====================
+
+let currentAuditPage = 0;
+const auditPageSize = 100;
+let totalAuditEntries = 0;
+
+function initAudit() {
+    document.getElementById('btn-filter-audit').addEventListener('click', () => {
+        currentAuditPage = 0;
+        loadAuditEntries();
+    });
+    
+    document.getElementById('btn-refresh-audit').addEventListener('click', () => {
+        loadAuditStats();
+        loadAuditEntries();
+    });
+    
+    document.getElementById('btn-export-audit-json').addEventListener('click', () => exportAudit('json'));
+    document.getElementById('btn-export-audit-csv').addEventListener('click', () => exportAudit('csv'));
+    
+    document.getElementById('btn-cleanup-audit').addEventListener('click', cleanupAudit);
+}
+
+async function loadAuditStats() {
+    try {
+        const response = await fetch('/api/audit/stats?days=7');
+        const result = await response.json();
+        
+        if (result.success) {
+            const stats = result.data;
+            document.getElementById('audit-total').textContent = stats.totalAllTime.toLocaleString();
+            document.getElementById('audit-success-rate').textContent = `${stats.successRate}%`;
+            
+            // Count today's entries
+            const today = new Date().toISOString().split('T')[0];
+            const todayCount = stats.perDay[today] || 0;
+            document.getElementById('audit-today').textContent = todayCount.toLocaleString();
+            
+            // Count Discord commands
+            const commandCount = stats.byType['DISCORD_COMMAND'] || 0;
+            document.getElementById('audit-commands').textContent = commandCount.toLocaleString();
+        }
+    } catch (error) {
+        console.error('Error loading audit stats:', error);
+    }
+}
+
+async function loadAuditEntries() {
+    const container = document.getElementById('audit-container');
+    container.innerHTML = '<div class="loading">Carregando...</div>';
+    
+    try {
+        const params = new URLSearchParams();
+        
+        const type = document.getElementById('filter-audit-type').value;
+        const action = document.getElementById('filter-audit-action').value;
+        const dateFrom = document.getElementById('filter-audit-date-from').value;
+        const dateTo = document.getElementById('filter-audit-date-to').value;
+        const limit = document.getElementById('filter-audit-limit').value;
+        
+        if (type) params.append('type', type);
+        if (action) params.append('action', action);
+        if (dateFrom) params.append('dateFrom', dateFrom);
+        if (dateTo) params.append('dateTo', dateTo + 'T23:59:59');
+        params.append('limit', limit);
+        params.append('offset', currentAuditPage * parseInt(limit, 10));
+        
+        const response = await fetch(`/api/audit?${params}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            totalAuditEntries = result.pagination.total;
+            renderAuditEntries(result.data);
+            renderAuditPagination();
+        } else {
+            container.innerHTML = `<div class="error">Erro: ${result.error}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading audit entries:', error);
+        container.innerHTML = '<div class="error">Erro ao carregar registros</div>';
+    }
+}
+
+function renderAuditEntries(entries) {
+    const container = document.getElementById('audit-container');
+    
+    if (!entries || entries.length === 0) {
+        container.innerHTML = '<div class="empty">Nenhum registro encontrado</div>';
+        return;
+    }
+    
+    container.innerHTML = entries.map(entry => {
+        const date = new Date(entry.timestamp);
+        const statusClass = entry.success ? 'success' : 'failure';
+        const statusText = entry.success ? '✓' : '✗';
+        
+        const actorBadge = getActorBadge(entry.actor?.type);
+        const actionLabel = getActionLabel(entry.action);
+        
+        let detailsHtml = '';
+        if (entry.details && Object.keys(entry.details).length > 0) {
+            const detailsText = Object.entries(entry.details)
+                .filter(([k, v]) => v !== null && v !== undefined)
+                .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+                .join(' | ');
+            if (detailsText) {
+                detailsHtml = `<div class="audit-details">${escapeHtml(detailsText)}</div>`;
+            }
+        }
+        
+        return `
+            <div class="audit-entry ${entry.type} ${entry.success ? '' : 'error'}">
+                <div class="audit-header">
+                    <span class="audit-action">${actionLabel}</span>
+                    <span class="audit-time">${formatTimeAgo(date)}</span>
+                </div>
+                <div class="audit-body">
+                    <span class="audit-actor">
+                        <span class="audit-actor-badge">${actorBadge}</span>
+                        ${escapeHtml(entry.actor?.name || 'Desconhecido')}
+                    </span>
+                    ${entry.target ? `<span class="audit-target">→ ${escapeHtml(entry.target.name || entry.target.id || '')}</span>` : ''}
+                    <span class="audit-status ${statusClass}">${statusText}</span>
+                </div>
+                ${detailsHtml}
+            </div>
+        `;
+    }).join('');
+}
+
+function getActorBadge(type) {
+    switch (type) {
+        case 'admin': return '🔧';
+        case 'user': return '👤';
+        case 'system': return '⚙️';
+        case 'plugin': return '🔌';
+        default: return '❓';
+    }
+}
+
+function getActionLabel(action) {
+    const labels = {
+        'alerts.create': '📝 Alerta Criado',
+        'alerts.update': '✏️ Alerta Atualizado',
+        'alerts.delete': '🗑️ Alerta Removido',
+        'alerts.force_check': '🔍 Verificação Forçada',
+        'parties.create': '🎉 Grupo Criado',
+        'parties.cancel': '❌ Grupo Cancelado',
+        'parties.cleanup': '🧹 Limpeza de Grupos',
+        'parties.remove_participant': '👋 Participante Removido',
+        'parties.update_class_limits': '⚔️ Limites de Classe',
+        'config.update': '⚙️ Config Atualizada',
+        'permissions.add': '➕ Permissão Adicionada',
+        'permissions.remove': '➖ Permissão Removida',
+        'deploy.global': '🌐 Deploy Global',
+        'deploy.guild': '🏠 Deploy Servidor',
+        'deploy.clear_global': '🌐 Limpar Global',
+        'deploy.clear_guild': '🏠 Limpar Servidor',
+        'service.start': '▶️ Serviço Iniciado',
+        'service.stop': '⏹️ Serviço Parado',
+        'plugins.enable': '🔌 Plugin Ativado',
+        'plugins.disable': '🔌 Plugin Desativado',
+        'plugins.reload': '🔄 Plugin Recarregado',
+        'command.execute': '💬 Comando Discord',
+        'system.bot_start': '🚀 Bot Iniciado',
+        'system.bot_stop': '🛑 Bot Parado',
+        'system.audit_cleanup': '🧹 Limpeza de Audit'
+    };
+    return labels[action] || action;
+}
+
+function renderAuditPagination() {
+    const container = document.getElementById('audit-pagination');
+    const limit = parseInt(document.getElementById('filter-audit-limit').value, 10);
+    const totalPages = Math.ceil(totalAuditEntries / limit);
+    
+    if (totalPages <= 1) {
+        container.innerHTML = `<span class="pagination-info">${totalAuditEntries} registro(s)</span>`;
+        return;
+    }
+    
+    container.innerHTML = `
+        <button class="btn btn-secondary" ${currentAuditPage === 0 ? 'disabled' : ''} onclick="changeAuditPage(-1)">← Anterior</button>
+        <span class="pagination-info">Página ${currentAuditPage + 1} de ${totalPages} (${totalAuditEntries} registros)</span>
+        <button class="btn btn-secondary" ${currentAuditPage >= totalPages - 1 ? 'disabled' : ''} onclick="changeAuditPage(1)">Próxima →</button>
+    `;
+}
+
+function changeAuditPage(delta) {
+    currentAuditPage += delta;
+    loadAuditEntries();
+}
+
+function exportAudit(format) {
+    const params = new URLSearchParams();
+    
+    const type = document.getElementById('filter-audit-type').value;
+    const action = document.getElementById('filter-audit-action').value;
+    const dateFrom = document.getElementById('filter-audit-date-from').value;
+    const dateTo = document.getElementById('filter-audit-date-to').value;
+    
+    if (type) params.append('type', type);
+    if (action) params.append('action', action);
+    if (dateFrom) params.append('dateFrom', dateFrom);
+    if (dateTo) params.append('dateTo', dateTo + 'T23:59:59');
+    params.append('format', format);
+    
+    window.open(`/api/audit/export?${params}`, '_blank');
+}
+
+async function cleanupAudit() {
+    const days = prompt('Remover registros com mais de quantos dias?', '30');
+    if (!days || isNaN(parseInt(days, 10))) return;
+    
+    if (!confirm(`Tem certeza que deseja remover registros com mais de ${days} dias?`)) return;
+    
+    try {
+        const response = await fetch(`/api/audit/cleanup?days=${days}`, { method: 'DELETE' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            loadAuditStats();
+            loadAuditEntries();
+        } else {
+            showToast(result.error || 'Erro ao limpar registros', 'error');
+        }
+    } catch (error) {
+        console.error('Error cleaning up audit:', error);
+        showToast('Erro ao limpar registros', 'error');
+    }
+}
+
+// ==================== PLUGINS ====================
+
+function initPlugins() {
+    document.getElementById('btn-refresh-plugins').addEventListener('click', loadPlugins);
+}
+
+async function loadPlugins() {
+    const container = document.getElementById('plugins-container');
+    container.innerHTML = '<div class="loading">Carregando...</div>';
+    
+    try {
+        const response = await fetch('/api/plugins');
+        const result = await response.json();
+        
+        if (result.success) {
+            renderPlugins(result.data);
+        } else {
+            container.innerHTML = `<div class="error">Erro: ${result.error}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading plugins:', error);
+        container.innerHTML = '<div class="error">Erro ao carregar plugins</div>';
+    }
+}
+
+function renderPlugins(plugins) {
+    const container = document.getElementById('plugins-container');
+    
+    if (!plugins || plugins.length === 0) {
+        container.innerHTML = `
+            <div class="plugins-empty">
+                <div class="plugins-empty-icon">🔌</div>
+                <h3>Nenhum plugin instalado</h3>
+                <p>Crie uma pasta em <code>/plugins/</code> com um arquivo <code>plugin.json</code></p>
+                <p>Consulte a documentação para criar seu primeiro plugin.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = plugins.map(plugin => {
+        const statusClass = plugin.enabled ? 'enabled' : 'disabled';
+        const statusText = plugin.enabled ? '✓ Ativado' : '○ Desativado';
+        
+        const commandsHtml = plugin.commands.length > 0
+            ? `<div class="plugin-commands">
+                ${plugin.commands.map(cmd => `<span class="plugin-command">/${cmd}</span>`).join('')}
+               </div>`
+            : '';
+        
+        const metaItems = [];
+        if (plugin.author) metaItems.push(`<span class="plugin-meta-item">👤 ${escapeHtml(plugin.author)}</span>`);
+        if (plugin.hasEvents) metaItems.push(`<span class="plugin-meta-item">📡 Eventos</span>`);
+        if (plugin.loadedAt) metaItems.push(`<span class="plugin-meta-item">📦 Carregado</span>`);
+        
+        return `
+            <div class="plugin-card ${statusClass}">
+                <div class="plugin-header">
+                    <span class="plugin-name">${escapeHtml(plugin.name)}</span>
+                    <span class="plugin-version">v${escapeHtml(plugin.version)}</span>
+                </div>
+                <div class="plugin-description">${escapeHtml(plugin.description || 'Sem descrição')}</div>
+                <div class="plugin-meta">${metaItems.join('')}</div>
+                ${commandsHtml}
+                <div class="plugin-actions">
+                    <span class="plugin-status ${statusClass}">${statusText}</span>
+                    ${plugin.enabled 
+                        ? `<button class="btn btn-warning btn-sm" onclick="disablePlugin('${plugin.name}')">Desativar</button>`
+                        : `<button class="btn btn-success btn-sm" onclick="enablePlugin('${plugin.name}')">Ativar</button>`
+                    }
+                    <button class="btn btn-secondary btn-sm" onclick="reloadPlugin('${plugin.name}')">Recarregar</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function enablePlugin(name) {
+    try {
+        const response = await fetch(`/api/plugins/${name}/enable`, { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            loadPlugins();
+            loadDeployStatus(); // Refresh commands list
+        } else {
+            showToast(result.error || 'Erro ao ativar plugin', 'error');
+        }
+    } catch (error) {
+        console.error('Error enabling plugin:', error);
+        showToast('Erro ao ativar plugin', 'error');
+    }
+}
+
+async function disablePlugin(name) {
+    if (!confirm(`Tem certeza que deseja desativar o plugin ${name}?`)) return;
+    
+    try {
+        const response = await fetch(`/api/plugins/${name}/disable`, { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            loadPlugins();
+            loadDeployStatus(); // Refresh commands list
+        } else {
+            showToast(result.error || 'Erro ao desativar plugin', 'error');
+        }
+    } catch (error) {
+        console.error('Error disabling plugin:', error);
+        showToast('Erro ao desativar plugin', 'error');
+    }
+}
+
+async function reloadPlugin(name) {
+    try {
+        const response = await fetch(`/api/plugins/${name}/reload`, { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            loadPlugins();
+            loadDeployStatus(); // Refresh commands list
+        } else {
+            showToast(result.error || 'Erro ao recarregar plugin', 'error');
+        }
+    } catch (error) {
+        console.error('Error reloading plugin:', error);
+        showToast('Erro ao recarregar plugin', 'error');
+    }
+}
+
 // Make functions available globally
 window.deleteAlert = deleteAlert;
 window.removeFromWhitelist = removeFromWhitelist;
@@ -2021,3 +2682,7 @@ window.selectRole = selectRole;
 window.deployToGuild = deployToGuild;
 window.clearGuildCommands = clearGuildCommands;
 window.toggleCommandSelection = toggleCommandSelection;
+window.changeAuditPage = changeAuditPage;
+window.enablePlugin = enablePlugin;
+window.disablePlugin = disablePlugin;
+window.reloadPlugin = reloadPlugin;
