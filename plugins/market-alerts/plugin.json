@@ -1,0 +1,10 @@
+{
+    "name": "market-alerts",
+    "version": "1.0.0",
+    "description": "Sistema de alertas de mercado para Ragnarok Online LATAM",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": ["alerta-mercado"],
+    "services": ["marketAlertService"],
+    "dependencies": []
+}

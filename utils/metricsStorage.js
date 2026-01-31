@@ -30,6 +30,7 @@ function getDefaultMetrics() {
     return {
         daily: {},
         hourly: {},
+        guilds: {},  // Guild-specific metrics
         totals: {
             commands: 0,
             errors: 0,
@@ -98,11 +99,17 @@ function getHourKey() {
  * @param {number} params.responseTime - Response time in milliseconds
  * @param {boolean} params.error - Whether the command resulted in an error
  * @param {string} [params.guildId] - Guild ID where executed
+ * @param {string} [params.guildName] - Guild name where executed
  */
-function recordCommand({ command, userId, responseTime, error = false, guildId = null }) {
+function recordCommand({ command, userId, responseTime, error = false, guildId = null, guildName = null }) {
     const metrics = loadMetrics();
     const dateKey = getDateKey();
     const hourKey = getHourKey();
+    
+    // Initialize guilds object if missing
+    if (!metrics.guilds) {
+        metrics.guilds = {};
+    }
     
     // Initialize daily data
     if (!metrics.daily[dateKey]) {
@@ -165,6 +172,43 @@ function recordCommand({ command, userId, responseTime, error = false, guildId =
     if (error) metrics.totals.errors++;
     if (!metrics.totals.uniqueUsers.includes(userId)) {
         metrics.totals.uniqueUsers.push(userId);
+    }
+    
+    // Update guild metrics
+    if (guildId) {
+        if (!metrics.guilds[guildId]) {
+            metrics.guilds[guildId] = {
+                name: guildName || guildId,
+                totalCommands: 0,
+                totalErrors: 0,
+                uniqueUsers: [],
+                topCommands: {},
+                lastActive: dateKey,
+                firstSeen: dateKey
+            };
+        }
+        
+        const guild = metrics.guilds[guildId];
+        
+        // Update guild name if provided
+        if (guildName && guild.name !== guildName) {
+            guild.name = guildName;
+        }
+        
+        guild.totalCommands++;
+        if (error) guild.totalErrors++;
+        guild.lastActive = dateKey;
+        
+        // Track unique users for the guild
+        if (!guild.uniqueUsers.includes(userId)) {
+            guild.uniqueUsers.push(userId);
+        }
+        
+        // Track top commands per guild
+        if (!guild.topCommands[command]) {
+            guild.topCommands[command] = 0;
+        }
+        guild.topCommands[command]++;
     }
     
     // Cleanup old data
@@ -348,6 +392,186 @@ function resetMetrics() {
     logger.info('Metrics reset');
 }
 
+// ==================== GUILD METRICS ====================
+
+/**
+ * Gets statistics for a specific guild
+ * @param {string} guildId - Guild ID
+ * @returns {Object|null} Guild statistics or null if not found
+ */
+function getGuildStats(guildId) {
+    const metrics = loadMetrics();
+    
+    if (!metrics.guilds || !metrics.guilds[guildId]) {
+        return null;
+    }
+    
+    const guild = metrics.guilds[guildId];
+    
+    // Calculate top commands sorted by count
+    const topCommands = Object.entries(guild.topCommands || {})
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+    
+    // Calculate error rate
+    const errorRate = guild.totalCommands > 0 
+        ? ((guild.totalErrors / guild.totalCommands) * 100).toFixed(2)
+        : '0.00';
+    
+    return {
+        guildId,
+        name: guild.name,
+        totalCommands: guild.totalCommands,
+        totalErrors: guild.totalErrors,
+        errorRate: errorRate + '%',
+        uniqueUsers: guild.uniqueUsers?.length || 0,
+        topCommands,
+        lastActive: guild.lastActive,
+        firstSeen: guild.firstSeen,
+        daysSinceActive: calculateDaysSince(guild.lastActive)
+    };
+}
+
+/**
+ * Gets top guilds by command usage
+ * @param {number} limit - Maximum number of guilds to return
+ * @returns {Array} Array of guild statistics sorted by command count
+ */
+function getTopGuilds(limit = 10) {
+    const metrics = loadMetrics();
+    
+    if (!metrics.guilds) {
+        return [];
+    }
+    
+    return Object.entries(metrics.guilds)
+        .map(([guildId, data]) => ({
+            guildId,
+            name: data.name,
+            totalCommands: data.totalCommands,
+            totalErrors: data.totalErrors,
+            errorRate: data.totalCommands > 0 
+                ? ((data.totalErrors / data.totalCommands) * 100).toFixed(1) + '%'
+                : '0%',
+            uniqueUsers: data.uniqueUsers?.length || 0,
+            lastActive: data.lastActive,
+            daysSinceActive: calculateDaysSince(data.lastActive)
+        }))
+        .sort((a, b) => b.totalCommands - a.totalCommands)
+        .slice(0, limit);
+}
+
+/**
+ * Gets all guilds with their statistics
+ * @returns {Array} Array of all guild statistics
+ */
+function getAllGuildStats() {
+    const metrics = loadMetrics();
+    
+    if (!metrics.guilds) {
+        return [];
+    }
+    
+    return Object.entries(metrics.guilds).map(([guildId, data]) => {
+        const topCommands = Object.entries(data.topCommands || {})
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
+        
+        return {
+            guildId,
+            name: data.name,
+            totalCommands: data.totalCommands,
+            totalErrors: data.totalErrors,
+            errorRate: data.totalCommands > 0 
+                ? ((data.totalErrors / data.totalCommands) * 100).toFixed(1) + '%'
+                : '0%',
+            uniqueUsers: data.uniqueUsers?.length || 0,
+            topCommands,
+            lastActive: data.lastActive,
+            firstSeen: data.firstSeen,
+            daysSinceActive: calculateDaysSince(data.lastActive)
+        };
+    });
+}
+
+/**
+ * Gets guild activity summary
+ * @param {number} days - Number of days to consider for active status
+ * @returns {Object} Activity summary
+ */
+function getGuildActivitySummary(days = 7) {
+    const metrics = loadMetrics();
+    
+    if (!metrics.guilds) {
+        return {
+            totalGuilds: 0,
+            activeGuilds: 0,
+            inactiveGuilds: 0,
+            totalCommands: 0,
+            totalUsers: 0
+        };
+    }
+    
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffKey = cutoff.toISOString().split('T')[0];
+    
+    let activeGuilds = 0;
+    let totalCommands = 0;
+    const allUsers = new Set();
+    
+    for (const [guildId, data] of Object.entries(metrics.guilds)) {
+        if (data.lastActive >= cutoffKey) {
+            activeGuilds++;
+        }
+        totalCommands += data.totalCommands;
+        for (const userId of (data.uniqueUsers || [])) {
+            allUsers.add(userId);
+        }
+    }
+    
+    const totalGuilds = Object.keys(metrics.guilds).length;
+    
+    return {
+        totalGuilds,
+        activeGuilds,
+        inactiveGuilds: totalGuilds - activeGuilds,
+        activeDays: days,
+        totalCommands,
+        totalUsers: allUsers.size
+    };
+}
+
+/**
+ * Calculates days since a given date
+ * @param {string} dateKey - Date in YYYY-MM-DD format
+ * @returns {number} Number of days since the date
+ */
+function calculateDaysSince(dateKey) {
+    if (!dateKey) return null;
+    
+    const date = new Date(dateKey);
+    const now = new Date();
+    const diffTime = Math.abs(now - date);
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Updates guild name in metrics
+ * @param {string} guildId - Guild ID
+ * @param {string} guildName - New guild name
+ */
+function updateGuildName(guildId, guildName) {
+    const metrics = loadMetrics();
+    
+    if (metrics.guilds && metrics.guilds[guildId]) {
+        metrics.guilds[guildId].name = guildName;
+        saveMetrics(metrics);
+    }
+}
+
 module.exports = {
     loadMetrics,
     saveMetrics,
@@ -356,5 +580,12 @@ module.exports = {
     getMetricsRange,
     getHourlyToday,
     getCommandStats,
-    resetMetrics
+    resetMetrics,
+    
+    // Guild metrics
+    getGuildStats,
+    getTopGuilds,
+    getAllGuildStats,
+    getGuildActivitySummary,
+    updateGuildName
 };

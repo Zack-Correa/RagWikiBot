@@ -8,6 +8,7 @@ const logger = require('../utils/logger');
 
 let discordClient = null;
 let checkInterval = null;
+let cleanupInterval = null;
 const CHECK_INTERVAL_MS = 60000; // Check every minute
 
 /**
@@ -21,7 +22,7 @@ function initialize(client) {
     startScheduler();
     
     // Cleanup old parties daily
-    setInterval(() => {
+    cleanupInterval = setInterval(() => {
         partyStorage.cleanupOldParties();
     }, 24 * 60 * 60 * 1000);
     
@@ -49,6 +50,10 @@ function stopScheduler() {
     if (checkInterval) {
         clearInterval(checkInterval);
         checkInterval = null;
+    }
+    if (cleanupInterval) {
+        clearInterval(cleanupInterval);
+        cleanupInterval = null;
     }
 }
 
@@ -271,12 +276,19 @@ function buildPartyEmbed(party, started = false) {
     };
     
     const embed = new EmbedBuilder()
-        .setTitle(`⚔️ ${party.instanceName}`)
+        .setTitle(`⚔️ Grupo para Instância`)
         .setColor(party.status === 'cancelled' ? '#ED4245' : (started ? '#3BA55C' : '#F5A623'));
     
     if (party.description) {
         embed.setDescription(party.description);
     }
+    
+    // Instance name field
+    embed.addFields({
+        name: '🏰 Instância',
+        value: party.instanceName,
+        inline: true
+    });
     
     // Scheduled time
     const scheduledDate = new Date(party.scheduledAt);
@@ -434,16 +446,25 @@ function buildPartyButtons(party) {
             .setCustomId(`party:leave:${party.id}`)
             .setLabel('Sair')
             .setEmoji('🚪')
-            .setStyle(ButtonStyle.Danger)
+            .setStyle(ButtonStyle.Secondary)
     );
     
-    // Configure button (only for creator)
+    // Configure button (for creator)
     buttonRow.addComponents(
         new ButtonBuilder()
             .setCustomId(`party:config:${party.id}`)
-            .setLabel('Configurar Classes')
+            .setLabel('Configurar')
             .setEmoji('⚙️')
             .setStyle(ButtonStyle.Secondary)
+    );
+    
+    // Cancel button (for creator)
+    buttonRow.addComponents(
+        new ButtonBuilder()
+            .setCustomId(`party:cancel:${party.id}`)
+            .setLabel('Cancelar Grupo')
+            .setEmoji('🗑️')
+            .setStyle(ButtonStyle.Danger)
     );
     
     rows.push(buttonRow);
@@ -495,6 +516,8 @@ async function handlePartyButton(interaction) {
         return await handleConfigClear(interaction, partyId);
     } else if (action === 'cfgdone') {
         return await handleConfigDone(interaction, partyId);
+    } else if (action === 'cancel') {
+        return await handleCancelButton(interaction, partyId);
     }
     
     return false;
@@ -811,6 +834,59 @@ async function handleConfigDone(interaction, partyId) {
         embeds: [],
         components: []
     });
+    
+    return true;
+}
+
+/**
+ * Handles cancel button click - cancels the party
+ */
+async function handleCancelButton(interaction, partyId) {
+    const party = partyStorage.getParty(partyId);
+    
+    if (!party) {
+        await interaction.reply({
+            content: '❌ Grupo não encontrado.',
+            ephemeral: true
+        });
+        return true;
+    }
+    
+    // Only creator can cancel
+    if (party.creatorId !== interaction.user.id) {
+        await interaction.reply({
+            content: '❌ Apenas o criador do grupo pode cancelar.',
+            ephemeral: true
+        });
+        return true;
+    }
+    
+    // Cancel the party
+    const result = partyStorage.cancelParty(partyId, interaction.user.id);
+    
+    if (!result.success) {
+        await interaction.reply({
+            content: `❌ ${result.error}`,
+            ephemeral: true
+        });
+        return true;
+    }
+    
+    // Update the message to show cancelled status
+    const cancelledParty = partyStorage.getParty(partyId);
+    const embed = buildPartyEmbed(cancelledParty);
+    
+    await interaction.update({
+        embeds: [embed],
+        components: [] // Remove all buttons
+    });
+    
+    // Notify in channel
+    await interaction.followUp({
+        content: `🗑️ O grupo **${party.instanceName}** foi cancelado por <@${interaction.user.id}>.`
+    });
+    
+    logger.info('Party cancelled via button', { partyId, cancelledBy: interaction.user.id });
     
     return true;
 }

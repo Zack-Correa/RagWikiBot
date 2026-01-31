@@ -5,14 +5,10 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const pricingService = require('../services/pricingService');
-const priceHistoryStorage = require('../utils/priceHistoryStorage');
-const gnjoy = require('../integrations/database/gnjoy');
-const logger = require('../utils/logger');
-
-// Servers to query
-const SERVERS = ['FREYA', 'NIDHOGG', 'YGGDRASIL'];
-const STORE_TYPES = ['BUY', 'SELL'];
+const priceHistoryStorage = require('../../../utils/priceHistoryStorage');
+const gnjoy = require('../../../integrations/database/gnjoy');
+const logger = require('../../../utils/logger');
+const { getServerChoices, SERVERS, STORE_TYPES } = require('../../../utils/commandHelpers');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -33,9 +29,7 @@ module.exports = {
                 .setRequired(false)
                 .addChoices(
                     { name: 'Todos', value: 'ALL' },
-                    { name: 'Freya', value: 'FREYA' },
-                    { name: 'Nidhogg', value: 'NIDHOGG' },
-                    { name: 'Yggdrasil', value: 'YGGDRASIL' }
+                    ...getServerChoices()
                 )),
     
     async execute(interaction) {

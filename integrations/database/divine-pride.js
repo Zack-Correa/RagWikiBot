@@ -8,6 +8,7 @@ const settings = require('../const.json');
 const config = require('../../config');
 const logger = require('../../utils/logger');
 const { APIError } = require('../../utils/errors');
+const apiCache = require('../../utils/apiCache');
 
 // API endpoints
 const ENDPOINTS = {
@@ -819,12 +820,90 @@ async function makeMapSearchQuery(queryString, language) {
     }
 }
 
+// ==================== CACHED WRAPPERS ====================
+
+/**
+ * Cached version of makeItemIdRequest
+ */
+async function makeItemIdRequestCached(itemId, language) {
+    const cacheKey = apiCache.generateKey('ITEM_SEARCH', { itemId, language });
+    return apiCache.getOrFetch('ITEM_SEARCH', { itemId, language }, 
+        () => makeItemIdRequest(itemId, language)
+    );
+}
+
+/**
+ * Cached version of makeSearchQuery
+ */
+async function makeSearchQueryCached(queryString, language) {
+    return apiCache.getOrFetch('ITEM_SEARCH', { query: queryString, language, type: 'item' }, 
+        () => makeSearchQuery(queryString, language)
+    );
+}
+
+/**
+ * Cached version of monsterSearch
+ */
+async function monsterSearchCached(monsterId, language = null) {
+    return apiCache.getOrFetch('MONSTER_SEARCH', { monsterId, language }, 
+        () => monsterSearch(monsterId, language)
+    );
+}
+
+/**
+ * Cached version of makeMonsterSearchQuery
+ */
+async function makeMonsterSearchQueryCached(queryString, language) {
+    return apiCache.getOrFetch('MONSTER_SEARCH', { query: queryString, language }, 
+        () => makeMonsterSearchQuery(queryString, language)
+    );
+}
+
+/**
+ * Cached version of mapSearch
+ */
+async function mapSearchCached(mapId, language = null) {
+    return apiCache.getOrFetch('MAP_SEARCH', { mapId, language }, 
+        () => mapSearch(mapId, language)
+    );
+}
+
+/**
+ * Cached version of makeMapSearchQuery
+ */
+async function makeMapSearchQueryCached(queryString, language) {
+    return apiCache.getOrFetch('MAP_SEARCH', { query: queryString, language }, 
+        () => makeMapSearchQuery(queryString, language)
+    );
+}
+
+/**
+ * Cached version of skillSearch
+ */
+async function skillSearchCached(skillId, language = null) {
+    return apiCache.getOrFetch('ITEM_SEARCH', { skillId, language, type: 'skill' }, 
+        () => skillSearch(skillId, language)
+    );
+}
+
 module.exports = {
+    // Original functions (for backwards compatibility and when cache not needed)
     makeItemIdRequest,
     makeSearchQuery,
     makeMonsterSearchQuery,
     makeMapSearchQuery,
     monsterSearch,
     mapSearch,
-    skillSearch
+    skillSearch,
+    
+    // Cached versions (recommended for most use cases)
+    cached: {
+        makeItemIdRequest: makeItemIdRequestCached,
+        makeSearchQuery: makeSearchQueryCached,
+        monsterSearch: monsterSearchCached,
+        makeMonsterSearchQuery: makeMonsterSearchQueryCached,
+        mapSearch: mapSearchCached,
+        makeMapSearchQuery: makeMapSearchQueryCached,
+        skillSearch: skillSearchCached
+    }
 };

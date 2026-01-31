@@ -8,14 +8,32 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 const metricsService = require('../services/metricsService');
+const auditLogger = require('../utils/auditLogger');
+const rateLimiter = require('../utils/rateLimiter');
 
-// Lazy load party service to avoid circular dependencies
+// Lazy load services to avoid circular dependencies
 let partyService = null;
 function getPartyService() {
     if (!partyService) {
         partyService = require('../services/partyService');
     }
     return partyService;
+}
+
+let pluginService = null;
+function getPluginService() {
+    if (!pluginService) {
+        pluginService = require('../services/pluginService');
+    }
+    return pluginService;
+}
+
+let pluginStorage = null;
+function getPluginStorage() {
+    if (!pluginStorage) {
+        pluginStorage = require('../utils/pluginStorage');
+    }
+    return pluginStorage;
 }
 
 class InteractionHandler {
@@ -75,11 +93,54 @@ class InteractionHandler {
         // Handle slash commands
         if (!interaction.isChatInputCommand()) return;
 
-        const command = this.commands.get(interaction.commandName);
+        // Check core commands first, then plugin commands
+        let command = this.commands.get(interaction.commandName);
+        let isPlugin = false;
+        
+        if (!command) {
+            // Check plugin commands
+            const pluginSvc = getPluginService();
+            command = pluginSvc.getPluginCommand(interaction.commandName);
+            isPlugin = !!command;
+        }
 
         if (!command) {
             logger.warn('Unknown command', { commandName: interaction.commandName });
             return;
+        }
+
+        // Check guild-specific plugin permissions
+        if (isPlugin && command.pluginName && interaction.guildId) {
+            const storage = getPluginStorage();
+            const isEnabledForGuild = storage.isPluginEnabledForGuild(
+                command.pluginName,
+                interaction.guildId
+            );
+            
+            if (!isEnabledForGuild) {
+                return interaction.reply({
+                    content: '❌ Este comando está desativado neste servidor.',
+                    ephemeral: true
+                });
+            }
+        }
+
+        // Check rate limit
+        const limitResult = rateLimiter.checkLimit(
+            interaction.user.id, 
+            interaction.commandName
+        );
+        
+        if (limitResult.limited) {
+            logger.info('Rate limit exceeded', {
+                user: interaction.user.tag,
+                command: interaction.commandName,
+                category: limitResult.category,
+                remainingSeconds: limitResult.remainingSeconds
+            });
+            
+            const rateLimitMessage = rateLimiter.getRateLimitMessage(limitResult);
+            return interaction.reply(rateLimitMessage);
         }
 
         // Start timing for metrics
@@ -100,8 +161,25 @@ class InteractionHandler {
                 command: interaction.commandName,
                 error: error.message,
                 stack: error.stack,
-                user: interaction.user.tag
+                user: interaction.user.tag,
+                isPlugin
             });
+
+            // Record plugin error for auto-disable feature
+            if (isPlugin && command.pluginName) {
+                const pluginSvc = getPluginService();
+                const wasDisabled = pluginSvc.recordPluginError(
+                    command.pluginName,
+                    error,
+                    'command'
+                );
+                
+                if (wasDisabled) {
+                    logger.warn('Plugin auto-disabled due to errors', {
+                        plugin: command.pluginName
+                    });
+                }
+            }
 
             const errorMessage = '❌ Ocorreu um erro ao executar este comando.';
 
@@ -123,6 +201,19 @@ class InteractionHandler {
                 startTime,
                 error: hasError
             });
+            
+            // Record audit log
+            const executionTime = Date.now() - startTime;
+            auditLogger.logCommandExecution({
+                interaction,
+                command: interaction.commandName,
+                details: {
+                    subcommand: interaction.options?.getSubcommand?.(false) || null,
+                    executionTimeMs: executionTime
+                },
+                success: !hasError,
+                error: hasError ? 'Command execution failed' : null
+            });
         }
     }
 
@@ -132,7 +223,13 @@ class InteractionHandler {
      * @private
      */
     async _handleAutocomplete(interaction) {
-        const command = this.commands.get(interaction.commandName);
+        // Check core commands first, then plugin commands
+        let command = this.commands.get(interaction.commandName);
+        
+        if (!command) {
+            const pluginSvc = getPluginService();
+            command = pluginSvc.getPluginCommand(interaction.commandName);
+        }
         
         if (!command || !command.autocomplete) {
             return;

@@ -1,0 +1,21 @@
+{
+    "name": "agentforce",
+    "version": "1.0.0",
+    "description": "Assistente AI com Salesforce Agentforce para buscas RAG em linguagem natural",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": [],
+    "features": [
+        "Responde perguntas em linguagem natural",
+        "Busca automática em Divine Pride, Browiki e Mercado",
+        "Execução automática de comandos baseado na intenção",
+        "Sessões de conversa por usuário"
+    ],
+    "config": {
+        "triggerOnMention": true,
+        "triggerOnDM": true,
+        "allowedChannels": [],
+        "sessionTimeoutMinutes": 30
+    },
+    "dependencies": []
+}

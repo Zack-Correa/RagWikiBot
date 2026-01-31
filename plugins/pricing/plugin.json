@@ -1,0 +1,9 @@
+{
+    "name": "pricing",
+    "version": "1.0.0",
+    "description": "Analise de precos e historico de mercado do Ragnarok Online LATAM",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": ["preco-justo", "historico-preco"],
+    "dependencies": []
+}

@@ -6,6 +6,7 @@
 const logger = require('../utils/logger');
 const eventsStorage = require('../utils/eventsStorage');
 const gnjoyEvents = require('../integrations/database/gnjoy-events');
+const { sleep } = require('../utils/helpers');
 
 // Check interval (5 minutes)
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
@@ -234,14 +235,6 @@ function formatDateTime(date) {
         hour: '2-digit',
         minute: '2-digit'
     });
-}
-
-/**
- * Sleep helper
- * @param {number} ms - Milliseconds
- */
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 module.exports = {

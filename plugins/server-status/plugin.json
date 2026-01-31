@@ -1,0 +1,9 @@
+{
+    "name": "server-status",
+    "version": "1.0.0",
+    "description": "Monitora e exibe o status dos servidores de Ragnarok Online LATAM",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": ["servidor-status"],
+    "dependencies": []
+}

@@ -7,6 +7,7 @@ const logger = require('../utils/logger');
 const alertStorage = require('../utils/alertStorage');
 const configStorage = require('../utils/configStorage');
 const gnjoy = require('../integrations/database/gnjoy');
+const { sleep } = require('../utils/helpers');
 
 let client = null;
 let intervalId = null;
@@ -320,7 +321,7 @@ async function sendAlertNotification(alert, items, priceInfo = {}) {
         
         const { EmbedBuilder } = require('discord.js');
         
-        const storeTypeLabel = alert.storeType === 'BUY' ? 'Comprando' : 'Vendendo';
+        const storeTypeLabel = gnjoy.getStoreTypeLabel(alert.storeType);
         
         // Different title and color based on notification type
         let title = '🔔 Alerta de Mercado!';
@@ -430,14 +431,6 @@ function getStatus() {
         requestDelayMs: config.requestDelayMs,
         ...stats
     };
-}
-
-/**
- * Sleep helper
- * @param {number} ms - Milliseconds to sleep
- */
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 module.exports = {
