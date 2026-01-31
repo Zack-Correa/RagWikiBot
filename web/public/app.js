@@ -2402,79 +2402,94 @@ function renderAuditEntries(entries) {
     container.innerHTML = entries.map(entry => {
         const date = new Date(entry.timestamp);
         const statusClass = entry.success ? 'success' : 'failure';
-        const statusText = entry.success ? '✓' : '✗';
+        const statusText = entry.success ? 'OK' : 'ERRO';
         
-        const actorBadge = getActorBadge(entry.actor?.type);
+        const typeClass = getTypeClass(entry.type);
+        const typeLabel = getTypeLabel(entry.type);
         const actionLabel = getActionLabel(entry.action);
         
         let detailsHtml = '';
         if (entry.details && Object.keys(entry.details).length > 0) {
             const detailsText = Object.entries(entry.details)
                 .filter(([k, v]) => v !== null && v !== undefined)
+                .slice(0, 3)
                 .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
                 .join(' | ');
             if (detailsText) {
-                detailsHtml = `<div class="audit-details">${escapeHtml(detailsText)}</div>`;
+                detailsHtml = `<div class="audit-entry-details">${escapeHtml(detailsText)}</div>`;
             }
         }
         
         return `
-            <div class="audit-entry ${entry.type} ${entry.success ? '' : 'error'}">
-                <div class="audit-header">
-                    <span class="audit-action">${actionLabel}</span>
-                    <span class="audit-time">${formatTimeAgo(date)}</span>
+            <div class="audit-entry">
+                <div class="audit-entry-main">
+                    <div class="audit-entry-header">
+                        <span class="audit-entry-action">${actionLabel}</span>
+                        <span class="audit-entry-type ${typeClass}">${typeLabel}</span>
+                        <span class="audit-entry-status ${statusClass}">${statusText}</span>
+                    </div>
+                    <div class="audit-entry-meta">
+                        <span class="audit-entry-actor">${escapeHtml(entry.actor?.name || 'Sistema')}</span>
+                        ${entry.target ? `<span class="audit-entry-target">→ ${escapeHtml(entry.target.name || entry.target.id || '')}</span>` : ''}
+                    </div>
+                    ${detailsHtml}
                 </div>
-                <div class="audit-body">
-                    <span class="audit-actor">
-                        <span class="audit-actor-badge">${actorBadge}</span>
-                        ${escapeHtml(entry.actor?.name || 'Desconhecido')}
-                    </span>
-                    ${entry.target ? `<span class="audit-target">→ ${escapeHtml(entry.target.name || entry.target.id || '')}</span>` : ''}
-                    <span class="audit-status ${statusClass}">${statusText}</span>
-                </div>
-                ${detailsHtml}
+                <span class="audit-entry-time">${formatTimeAgo(date)}</span>
             </div>
         `;
     }).join('');
 }
 
-function getActorBadge(type) {
+function getTypeClass(type) {
     switch (type) {
-        case 'admin': return '🔧';
-        case 'user': return '👤';
-        case 'system': return '⚙️';
-        case 'plugin': return '🔌';
-        default: return '❓';
+        case 'ADMIN_ACTION': return 'admin';
+        case 'DISCORD_COMMAND': return 'discord';
+        case 'PLUGIN_ACTION': return 'plugin';
+        case 'SYSTEM': return 'system';
+        default: return '';
+    }
+}
+
+function getTypeLabel(type) {
+    switch (type) {
+        case 'ADMIN_ACTION': return 'Admin';
+        case 'DISCORD_COMMAND': return 'Discord';
+        case 'PLUGIN_ACTION': return 'Plugin';
+        case 'SYSTEM': return 'System';
+        default: return type || 'Outro';
     }
 }
 
 function getActionLabel(action) {
     const labels = {
-        'alerts.create': '📝 Alerta Criado',
-        'alerts.update': '✏️ Alerta Atualizado',
-        'alerts.delete': '🗑️ Alerta Removido',
-        'alerts.force_check': '🔍 Verificação Forçada',
-        'parties.create': '🎉 Grupo Criado',
-        'parties.cancel': '❌ Grupo Cancelado',
-        'parties.cleanup': '🧹 Limpeza de Grupos',
-        'parties.remove_participant': '👋 Participante Removido',
-        'parties.update_class_limits': '⚔️ Limites de Classe',
-        'config.update': '⚙️ Config Atualizada',
-        'permissions.add': '➕ Permissão Adicionada',
-        'permissions.remove': '➖ Permissão Removida',
-        'deploy.global': '🌐 Deploy Global',
-        'deploy.guild': '🏠 Deploy Servidor',
-        'deploy.clear_global': '🌐 Limpar Global',
-        'deploy.clear_guild': '🏠 Limpar Servidor',
-        'service.start': '▶️ Serviço Iniciado',
-        'service.stop': '⏹️ Serviço Parado',
-        'plugins.enable': '🔌 Plugin Ativado',
-        'plugins.disable': '🔌 Plugin Desativado',
-        'plugins.reload': '🔄 Plugin Recarregado',
-        'command.execute': '💬 Comando Discord',
-        'system.bot_start': '🚀 Bot Iniciado',
-        'system.bot_stop': '🛑 Bot Parado',
-        'system.audit_cleanup': '🧹 Limpeza de Audit'
+        'alerts.create': 'Alerta Criado',
+        'alerts.update': 'Alerta Atualizado',
+        'alerts.delete': 'Alerta Removido',
+        'alerts.force_check': 'Verificação Forçada',
+        'parties.create': 'Grupo Criado',
+        'parties.cancel': 'Grupo Cancelado',
+        'parties.cleanup': 'Limpeza de Grupos',
+        'parties.remove_participant': 'Participante Removido',
+        'parties.update_class_limits': 'Limites de Classe',
+        'config.update': 'Config Atualizada',
+        'permissions.add': 'Permissão Adicionada',
+        'permissions.remove': 'Permissão Removida',
+        'deploy.global': 'Deploy Global',
+        'deploy.guild': 'Deploy Servidor',
+        'deploy.clear_global': 'Limpar Global',
+        'deploy.clear_guild': 'Limpar Servidor',
+        'service.start': 'Serviço Iniciado',
+        'service.stop': 'Serviço Parado',
+        'plugins.enable': 'Plugin Ativado',
+        'plugins.disable': 'Plugin Desativado',
+        'plugins.reload': 'Plugin Recarregado',
+        'command.execute': 'Comando Discord',
+        'system.bot_start': 'Bot Iniciado',
+        'system.bot_stop': 'Bot Parado',
+        'system.audit_cleanup': 'Limpeza de Audit',
+        'backup.create': 'Backup Criado',
+        'backup.restore': 'Backup Restaurado',
+        'backup.delete': 'Backup Removido'
     };
     return labels[action] || action;
 }
