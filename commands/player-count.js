@@ -148,8 +148,16 @@ async function sendPlayerCounts(interaction, result) {
         }
 
         embed.addFields({
-            name: '💡 Dica',
-            value: 'Para habilitar a contagem via login, configure `RO_PROBE_USERNAME` e `RO_PROBE_PASSWORD` no `.env` com uma conta dedicada.',
+            name: '💡 Como Habilitar',
+            value: [
+                'Para obter a contagem de jogadores, configure no `.env`:',
+                '```',
+                'RO_PROBE_USERNAME=sua_conta_ro',
+                'RO_PROBE_PASSWORD=sua_senha',
+                '```',
+                'Use uma conta dedicada (não a principal).',
+                'O bot faz login momentâneo apenas para ler a lista de servidores.'
+            ].join('\n'),
             inline: false
         });
 

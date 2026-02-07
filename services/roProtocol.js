@@ -33,7 +33,8 @@ const PACKET_IDS = {
     // Login Server -> Client
     AC_ACCEPT_LOGIN: 0x0069,       // Login accepted (contains server list!)
     AC_ACCEPT_LOGIN2: 0x0AC4,      // Login accepted (newer)
-    AC_REFUSE_LOGIN: 0x006A,       // Login refused
+    AC_REFUSE_LOGIN: 0x006A,       // Login refused (standard, 23 bytes)
+    AC_REFUSE_LOGIN3: 0x083E,      // Login refused v3 (GNJoy LATAM, 26 bytes)
     AC_ACK_HASH: 0x0205,           // Hash check ack
 
     // Client -> Char Server
@@ -223,7 +224,7 @@ function parseLoginAccepted(data) {
 }
 
 /**
- * Parses login refused response (0x006A)
+ * Parses login refused response (0x006A standard or 0x083E newer)
  * @param {Buffer} data
  * @returns {Object|null}
  */
@@ -231,9 +232,41 @@ function parseLoginRefused(data) {
     if (!data || data.length < 3) return null;
 
     const packetId = data.readUInt16LE(0);
-    if (packetId !== PACKET_IDS.AC_REFUSE_LOGIN) return null;
 
-    const errorCode = data.readUInt8(2);
+    // Standard refusal: 0x006A - ID(2) + ErrorCode(1) + BlockDate(20) = 23 bytes
+    if (packetId === PACKET_IDS.AC_REFUSE_LOGIN) {
+        const errorCode = data.readUInt8(2);
+        return {
+            packetId,
+            packetName: 'AC_REFUSE_LOGIN',
+            errorCode,
+            reason: getRefuseReason(errorCode),
+            blockDate: data.length >= 23 ? readFixedString(data, 3, 20) : null
+        };
+    }
+
+    // Newer refusal: 0x083E - ID(2) + ErrorCode(4) + BlockDate(20) = 26 bytes
+    // Used by GNJoy LATAM and other modern official servers
+    if (packetId === PACKET_IDS.AC_REFUSE_LOGIN3) {
+        const errorCode = data.readUInt32LE(2);
+        return {
+            packetId,
+            packetName: 'AC_REFUSE_LOGIN3',
+            errorCode,
+            reason: getRefuseReason(errorCode),
+            blockDate: data.length >= 26 ? readFixedString(data, 6, 20) : null
+        };
+    }
+
+    return null;
+}
+
+/**
+ * Gets human-readable refusal reason
+ * @param {number} errorCode
+ * @returns {string}
+ */
+function getRefuseReason(errorCode) {
     const reasons = {
         0: 'Unregistered ID',
         1: 'Incorrect password',
@@ -253,14 +286,10 @@ function parseLoginRefused(data) {
         15: 'Not permitted group',
         99: 'Account gone',
         100: 'Login info remains',
+        5011: 'Authentication failed (GNJoy)',
     };
 
-    return {
-        packetId,
-        errorCode,
-        reason: reasons[errorCode] || `Unknown error (${errorCode})`,
-        blockDate: data.length >= 23 ? readFixedString(data, 3, 20) : null
-    };
+    return reasons[errorCode] || `Unknown error (${errorCode})`;
 }
 
 /**
@@ -280,7 +309,8 @@ function identifyPacket(data) {
     const knownPackets = {
         [PACKET_IDS.AC_ACCEPT_LOGIN]: 'Login Accepted (server list with player counts)',
         [PACKET_IDS.AC_ACCEPT_LOGIN2]: 'Login Accepted v2 (server list with player counts)',
-        [PACKET_IDS.AC_REFUSE_LOGIN]: 'Login Refused',
+        [PACKET_IDS.AC_REFUSE_LOGIN]: 'Login Refused (standard)',
+        [PACKET_IDS.AC_REFUSE_LOGIN3]: 'Login Refused v3 (GNJoy)',
         [PACKET_IDS.AC_ACK_HASH]: 'Hash Check Acknowledgement',
     };
 
@@ -438,15 +468,16 @@ function sendPacket(host, port, packet, timeoutMs = 5000) {
 }
 
 /**
- * Attempts login and returns server list with player counts
+ * Attempts login with a specific client version and returns the result
  * @param {string} host
  * @param {number} port
  * @param {string} username
  * @param {string} password
+ * @param {number} [clientVersion=20]
  * @param {number} [timeoutMs=8000]
  * @returns {Promise<Object>} Login result
  */
-function attemptLogin(host, port, username, password, timeoutMs = 8000) {
+function attemptLoginSingle(host, port, username, password, clientVersion = 20, timeoutMs = 8000) {
     return new Promise((resolve) => {
         const startTime = Date.now();
         const socket = new net.Socket();
@@ -455,7 +486,7 @@ function attemptLogin(host, port, username, password, timeoutMs = 8000) {
         socket.setTimeout(timeoutMs);
 
         socket.on('connect', () => {
-            const loginPacket = buildLoginPacket(username, password);
+            const loginPacket = buildLoginPacket(username, password, clientVersion);
             socket.write(loginPacket);
         });
 
@@ -475,7 +506,8 @@ function attemptLogin(host, port, username, password, timeoutMs = 8000) {
                 return resolve({
                     success: false,
                     error: 'No response data',
-                    responseTime
+                    responseTime,
+                    clientVersion
                 });
             }
 
@@ -492,19 +524,22 @@ function attemptLogin(host, port, username, password, timeoutMs = 8000) {
                         userLevel: loginResult.userLevel,
                         gender: loginResult.gender
                     },
-                    responseTime
+                    responseTime,
+                    clientVersion
                 });
             }
 
-            // Try to parse as login refused
+            // Try to parse as login refused (standard 0x006A or newer 0x083E)
             const refusedResult = parseLoginRefused(data);
             if (refusedResult) {
                 return resolve({
                     success: false,
                     type: 'login_refused',
+                    packetName: refusedResult.packetName,
                     errorCode: refusedResult.errorCode,
                     reason: refusedResult.reason,
-                    responseTime
+                    responseTime,
+                    clientVersion
                 });
             }
 
@@ -515,7 +550,8 @@ function attemptLogin(host, port, username, password, timeoutMs = 8000) {
                 type: 'unknown_response',
                 packetInfo,
                 rawHex: data.slice(0, 64).toString('hex'),
-                responseTime
+                responseTime,
+                clientVersion
             });
         });
 
@@ -524,7 +560,8 @@ function attemptLogin(host, port, username, password, timeoutMs = 8000) {
             resolve({
                 success: false,
                 error: 'timeout',
-                elapsed: Date.now() - startTime
+                elapsed: Date.now() - startTime,
+                clientVersion
             });
         });
 
@@ -533,12 +570,63 @@ function attemptLogin(host, port, username, password, timeoutMs = 8000) {
             resolve({
                 success: false,
                 error: err.code || err.message,
-                elapsed: Date.now() - startTime
+                elapsed: Date.now() - startTime,
+                clientVersion
             });
         });
 
         socket.connect(port, host);
     });
+}
+
+/**
+ * Attempts login trying multiple client versions for compatibility
+ * GNJoy LATAM tested versions:
+ *   - v20: responds with 0x083E (newer refusal, error 5011)
+ *   - v46: responds with 0x006A (standard refusal) or 0x083E
+ *   - v55: responds with 0x083E (newer refusal, error 5011)
+ * 
+ * @param {string} host
+ * @param {number} port
+ * @param {string} username
+ * @param {string} password
+ * @param {number} [timeoutMs=8000]
+ * @returns {Promise<Object>} Best login result
+ */
+async function attemptLogin(host, port, username, password, timeoutMs = 8000) {
+    // Try versions in order of most likely to succeed on GNJoy LATAM
+    const versions = [20, 46, 55];
+
+    for (const version of versions) {
+        logger.debug(`Attempting login with client version ${version}...`);
+
+        const result = await attemptLoginSingle(host, port, username, password, version, timeoutMs);
+
+        // If we got the server list, return immediately
+        if (result.success) {
+            logger.info(`Login succeeded with version ${version}`, {
+                serverCount: result.servers?.length
+            });
+            return result;
+        }
+
+        // If we got a definitive refusal (wrong password, etc), 
+        // no point trying other versions
+        if (result.type === 'login_refused' && 
+            (result.errorCode === 1 || result.errorCode === 0)) {
+            logger.debug(`Login refused with version ${version}: ${result.reason}`);
+            return result;
+        }
+
+        logger.debug(`Version ${version} result: ${result.type || result.error}`);
+    }
+
+    // Return the last result
+    return {
+        success: false,
+        error: 'All client versions failed',
+        versionsAttempted: versions
+    };
 }
 
 module.exports = {
@@ -548,10 +636,12 @@ module.exports = {
     buildCharEnterPacket,
     parseLoginAccepted,
     parseLoginRefused,
+    getRefuseReason,
     identifyPacket,
     probePort,
     sendPacket,
     attemptLogin,
+    attemptLoginSingle,
     // Helpers
     writeUInt16LE,
     writeUInt32LE,

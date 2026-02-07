@@ -31,6 +31,12 @@ const CONFIG = {
         port: 6900
     },
 
+    // OTP/Token server
+    otpServer: {
+        host: 'lt-account-01.gnjoylatam.com',
+        port: 6951
+    },
+
     // Known server names and IDs
     servers: {
         FREYA: { id: 3, index: 0 },
@@ -38,17 +44,21 @@ const CONFIG = {
         YGGDRASIL: { id: 5, index: 2 }
     },
 
+    // Confirmed open char server ports on GNJoy LATAM (discovered via probing)
+    // All on lt-account-01.gnjoylatam.com
+    discoveredPorts: {
+        charServers: [6121, 6122, 6123, 6124, 6125, 6126, 6127, 6128, 6129, 6130],
+        mapServers: [5121, 5122, 5123, 5124, 5125, 5126, 5127, 5128, 5129, 5130],
+        accountServer: 6900,
+        otpServer: 6951
+    },
+
     // Possible char server hostnames to probe
     charServerHosts: [
-        'lt-account-01.gnjoylatam.com',  // Same host as account server
-        'lt-char-01.gnjoylatam.com',
-        'lt-char-02.gnjoylatam.com',
-        'lt-char-03.gnjoylatam.com',
-        'lt-game-01.gnjoylatam.com',
-        'lt-world-01.gnjoylatam.com',
+        'lt-account-01.gnjoylatam.com',  // Confirmed: all services on this host
     ],
 
-    // Common char server ports to probe
+    // Char server ports to probe (confirmed open on GNJoy LATAM)
     charServerPorts: [6121, 6122, 6123, 6124, 6125, 6126, 6127, 6128, 6129, 6130],
 
     // Timing
