@@ -1496,6 +1496,82 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    // ==================== PLAYER COUNT ENDPOINTS ====================
+
+    /**
+     * GET /api/player-count
+     * Returns current player count data
+     */
+    router.get('/player-count', (req, res) => {
+        try {
+            const playerCountService = require('../../services/playerCountService');
+            const data = playerCountService.getPlayerCounts();
+            res.json({
+                success: true,
+                data
+            });
+        } catch (error) {
+            logger.error('Error getting player count', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/player-count/check
+     * Forces a player count check
+     */
+    router.post('/player-count/check', async (req, res) => {
+        try {
+            const playerCountService = require('../../services/playerCountService');
+            const result = await playerCountService.forceCheck();
+            res.json({
+                success: true,
+                data: result,
+                message: 'Verificação de player count concluída'
+            });
+        } catch (error) {
+            logger.error('Error checking player count', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/player-count/history
+     * Returns player count history
+     */
+    router.get('/player-count/history', (req, res) => {
+        try {
+            const playerCountService = require('../../services/playerCountService');
+            const { limit } = req.query;
+            const history = playerCountService.getHistory(parseInt(limit, 10) || 50);
+            res.json({
+                success: true,
+                data: { history, total: history.length }
+            });
+        } catch (error) {
+            logger.error('Error getting player count history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/player-count/diagnostics
+     * Returns probe/diagnostic data
+     */
+    router.get('/player-count/diagnostics', (req, res) => {
+        try {
+            const playerCountService = require('../../services/playerCountService');
+            const diagnostics = playerCountService.getDiagnostics();
+            res.json({
+                success: true,
+                data: diagnostics
+            });
+        } catch (error) {
+            logger.error('Error getting player count diagnostics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== PRICING ANALYSIS ENDPOINTS ====================
 
     /**
