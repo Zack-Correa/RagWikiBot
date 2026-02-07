@@ -1,7 +1,7 @@
 /**
  * Slash Command: /conta
  * Manages shared Ragnarok accounts with TOTP
- * Subcommands: ver, criar, editar, deletar, permissao, listar
+ * Subcommands: ver, criar, editar, deletar, permissao, listar, totp, historico
  */
 
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
@@ -229,6 +229,28 @@ const command = {
                         .setRequired(true)
                         .setAutocomplete(true)
                 )
+        )
+        
+        // Subcommand: historico (view access history - owner/admin only)
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('historico')
+                .setDescription('Visualiza histórico de acessos de uma conta (apenas dono ou admin)')
+                .addStringOption(option =>
+                    option
+                        .setName('conta')
+                        .setDescription('Conta para ver o histórico')
+                        .setRequired(true)
+                        .setAutocomplete(true)
+                )
+                .addIntegerOption(option =>
+                    option
+                        .setName('limite')
+                        .setDescription('Número máximo de registros (padrão: 20, máx: 50)')
+                        .setMinValue(1)
+                        .setMaxValue(50)
+                        .setRequired(false)
+                )
         ),
 
     /**
@@ -244,8 +266,8 @@ const command = {
             
             let accounts = [];
             
-            // For owner/admin commands (editar, deletar, permissao, totp)
-            if (['editar', 'deletar', 'permissao', 'totp'].includes(subcommand)) {
+            // For owner/admin commands (editar, deletar, permissao, totp, historico)
+            if (['editar', 'deletar', 'permissao', 'totp', 'historico'].includes(subcommand)) {
                 const allAccounts = storage.getAllAccounts();
                 // Show all accounts for admins, or only owned accounts for regular users
                 if (isAdmin) {
@@ -301,6 +323,8 @@ const command = {
                 return handlePermissao(interaction);
             case 'totp':
                 return handleTotp(interaction);
+            case 'historico':
+                return handleHistorico(interaction);
             default:
                 return interaction.reply({ content: '❌ Subcomando desconhecido.', ephemeral: true });
         }
@@ -1090,6 +1114,119 @@ async function handleTotp(interaction) {
         } catch (dmError) {
             // Ignore
         }
+    }
+}
+
+/**
+ * Handle /conta historico - View access history (owner or admin only)
+ */
+async function handleHistorico(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const accountId = interaction.options.getString('conta');
+    const limit = interaction.options.getInteger('limite') || 20;
+
+    try {
+        const account = storage.getAccount(accountId);
+        if (!account) {
+            return interaction.editReply({ content: '❌ Conta não encontrada.' });
+        }
+
+        // Check if user is owner or admin
+        const isAdmin = interaction.member?.permissions?.has(PermissionFlagsBits.Administrator);
+        const isOwner = storage.isAccountOwner(accountId, interaction.user.id);
+        
+        if (!isOwner && !isAdmin) {
+            return interaction.editReply({ content: '❌ Apenas o dono da conta ou administradores podem ver o histórico.' });
+        }
+
+        // Get access logs
+        const logs = storage.getAccessLogs({ accountId, limit });
+
+        if (logs.length === 0) {
+            return interaction.editReply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(COLORS.WARNING)
+                        .setTitle('📋 Histórico de Acessos')
+                        .setDescription(`**Conta:** ${account.name}\n\nNenhum registro de acesso encontrado ainda.`)
+                ]
+            });
+        }
+
+        // Format logs for display
+        const logEntries = logs.map((log, index) => {
+            const date = new Date(log.timestamp);
+            const dateStr = date.toLocaleString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            // Map action types to emojis
+            const actionEmojis = {
+                'view': '👁️',
+                'credentials_requested': '🔑',
+                'totp_requested': '🔐',
+                'permission_granted': '✅',
+                'permission_revoked': '❌'
+            };
+
+            const actionEmoji = actionEmojis[log.action] || '📝';
+            const actionText = {
+                'view': 'Visualização',
+                'credentials_requested': 'Credenciais solicitadas',
+                'totp_requested': 'Código TOTP solicitado',
+                'permission_granted': 'Permissão concedida',
+                'permission_revoked': 'Permissão revogada'
+            }[log.action] || log.action;
+
+            return `${actionEmoji} **${log.username}** (${actionText})\n└ ${dateStr}`;
+        });
+
+        // Split into fields (Discord embed limit is 1024 chars per field)
+        const fields = [];
+        let currentField = '';
+        
+        for (const entry of logEntries) {
+            if (currentField.length + entry.length + 2 > 1024) {
+                fields.push({
+                    name: '\u200b',
+                    value: currentField.trim(),
+                    inline: false
+                });
+                currentField = entry + '\n';
+            } else {
+                currentField += entry + '\n';
+            }
+        }
+        
+        if (currentField.trim()) {
+            fields.push({
+                name: '\u200b',
+                value: currentField.trim(),
+                inline: false
+            });
+        }
+
+        // Create embed
+        const embed = new EmbedBuilder()
+            .setColor(COLORS.PRIMARY)
+            .setTitle('📋 Histórico de Acessos')
+            .setDescription(`**Conta:** ${account.name}\n**Total de registros:** ${logs.length}`)
+            .setFields(fields)
+            .setFooter({ text: `Mostrando ${logs.length} registro(s) mais recente(s)` })
+            .setTimestamp();
+
+        return interaction.editReply({ embeds: [embed] });
+
+    } catch (error) {
+        if (pluginLogger) {
+            pluginLogger.error('Error viewing access history', { error: error.message });
+        }
+        return interaction.editReply({ content: `❌ Erro ao visualizar histórico: ${error.message}` });
     }
 }
 

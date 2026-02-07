@@ -1,0 +1,51 @@
+🎉 **NOVO PLUGIN: CONTAS COMPARTILHADAS!** 🎉
+
+Agora você pode compartilhar contas do Ragnarok de forma **super segura** direto no Discord! 🔐
+
+✨ **O QUE TEM DE BOM:**
+
+🔒 **Segurança de Nível Banco**
+• Tudo criptografado com AES-256-GCM (mesma coisa que bancos usam!)
+• Suporte completo ao Google Authenticator (2FA)
+• Suas credenciais **só aparecem na sua DM** - nunca em canais públicos
+
+📱 **Super Fácil de Usar**
+• Configure o 2FA escaneando um QR Code pelo Discord
+• Códigos OTP que atualizam sozinhos por 3 minutos na sua DM
+• Tudo organizado e simples!
+
+👥 **Você Decide Quem Acessa**
+• Dá acesso por usuário, nome ou até por cargo do Discord
+• Controle total: pode permitir ou bloquear quem quiser
+• Perfeito para guilds que compartilham contas!
+
+📊 **Você Sabe Tudo**
+• Veja quem acessou cada conta e quando
+• Histórico completo de acessos com `/conta historico`
+• Log completo de tudo que aconteceu
+
+🚀 **COMO COMEÇAR:**
+
+1️⃣ Criar uma conta:
+`/conta criar nome:Minha Conta login:usuario@email.com servidor:Freya`
+
+2️⃣ Configurar 2FA (opcional mas recomendado!):
+`/conta totp conta:Minha Conta`
+Aí é só enviar o QR Code do Google Authenticator na DM! 📷
+
+3️⃣ Ver suas credenciais quando precisar:
+`/conta ver nome:Minha Conta`
+Recebe tudo na DM com código OTP atualizado! ⚡
+
+4️⃣ Dar acesso para alguém:
+`/conta permissao conta:Minha Conta acao:Adicionar tipo:ID do Usuário valor:123456789`
+
+5️⃣ Ver histórico de acessos (só dono ou admin):
+`/conta historico conta:Minha Conta limite:20`
+Veja quem acessou, quando e o que fez! 📋
+
+💡 **DICA PRO:** Use `/conta listar` para ver todas as contas que você tem acesso!
+
+---
+
+**Comando:** `/conta` | Digite `/ajuda` para ver todos os subcomandos disponíveis! 🚀
