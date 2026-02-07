@@ -196,8 +196,10 @@ Plugins que causam muitos erros são desativados automaticamente:
 | `server-status` | `/servidor-status` | Status dos servidores RO LATAM |
 | `events` | `/eventos` | Notícias do GNJoy LATAM |
 | `pricing` | `/preco-justo`, `/historico-preco` | Análise de preços |
-| `market-alerts` | `/alerta-mercado` | Alertas de mercado |
-| `party` | `/grupo` | Grupos para instâncias |
+| `market-alerts` | `/alerta-mercado` | Alertas de mercado com estratégia inteligente |
+| `party` | `/grupo` | Grupos para instâncias com distribuição de loot |
+| `shared-accounts` | `/conta` | Gerenciamento de contas compartilhadas com TOTP 2FA |
+| `agentforce` | (IA) | Assistente IA para consultas em linguagem natural |
 
 ## API de Administração
 
