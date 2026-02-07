@@ -231,12 +231,32 @@ async function trySSOStrategy() {
             // Error 8 = already logged in, but token format is correct!
             if (result.errorCode === 8) {
                 logger.info('Token format is valid! Account is just already logged in.');
+                return {
+                    strategy: 'sso',
+                    timestamp: new Date().toISOString(),
+                    success: false,
+                    error: 'already_logged_in',
+                    message: 'Token válido, mas conta já está logada. Tente novamente quando a conta não estiver em uso.',
+                    responseTime: result.responseTime
+                };
             }
         } else if (result.type === 'login_refused') {
             logger.warn('SSO strategy: login refused', {
                 errorCode: result.errorCode,
                 reason: result.reason
             });
+        } else if (result.error === 'timeout') {
+            logger.warn('SSO strategy: timeout - token may have expired or server is not responding', {
+                elapsed: result.elapsed
+            });
+            return {
+                strategy: 'sso',
+                timestamp: new Date().toISOString(),
+                success: false,
+                error: 'timeout',
+                message: 'Timeout ao conectar. O token pode ter expirado. Capture um novo token do Wireshark.',
+                elapsed: result.elapsed
+            };
         } else {
             logger.warn('SSO strategy failed', {
                 type: result.type,

@@ -193,31 +193,58 @@ function buildSSOLoginPacket(username, authToken, macAddress = null, ipAddress =
     // Client Type
     packet.writeUInt8(clientType, offset); offset += 1;
     
-    // Username (24 bytes, null-padded)
+    // Username (24 bytes)
+    // Note: Original capture shows username field may have special byte at end (0x60)
+    // We'll write username and let it be padded naturally
     const usernameBuf = Buffer.from(username, 'ascii');
-    usernameBuf.copy(packet, offset, 0, Math.min(usernameBuf.length, 23));
+    const usernameLen = Math.min(usernameBuf.length, 23);
+    usernameBuf.copy(packet, offset, 0, usernameLen);
+    // Copy the exact structure from capture: username ends with null, then 0x60 byte
+    // But for now, just null-pad normally
+    if (usernameLen < 24) {
+        packet[offset + usernameLen] = 0; // Null terminator
+        // Original has 0x60 at offset 32, but we'll leave it as padding for now
+    }
     offset += 24;
     
     // Passcode/Hash (27 bytes) - appears to be some kind of hash or encrypted data
     // From capture: 305400a869c119efff7f3f00000000ac05f913fecaadba00000000
-    // We'll use zeros for now (may need to be generated properly)
+    // This might be a hash of password+OTP or similar. Using captured value for now.
+    const passcodeHex = '305400a869c119efff7f3f00000000ac05f913fecaadba00000000';
+    const passcodeBuf = Buffer.from(passcodeHex, 'hex');
+    passcodeBuf.copy(packet, offset, 0, 27);
     offset += 27;
     
     // MAC Address (17 bytes, null-terminated string)
     const mac = macAddress || '50-EB-F6-26-B7-EE';
     const macBuf = Buffer.from(mac, 'ascii');
-    macBuf.copy(packet, offset, 0, Math.min(macBuf.length, 16));
+    const macLen = Math.min(macBuf.length, 16);
+    macBuf.copy(packet, offset, 0, macLen);
+    // Ensure null terminator if string is shorter than 16
+    if (macLen < 16) {
+        packet[offset + macLen] = 0;
+    }
     offset += 17;
     
     // IP Address (15 bytes, null-terminated string)
     const ip = ipAddress || '127.0.0.1';
     const ipBuf = Buffer.from(ip, 'ascii');
-    ipBuf.copy(packet, offset, 0, Math.min(ipBuf.length, 14));
+    const ipLen = Math.min(ipBuf.length, 14);
+    ipBuf.copy(packet, offset, 0, ipLen);
+    // Ensure null terminator if string is shorter than 14
+    if (ipLen < 14) {
+        packet[offset + ipLen] = 0;
+    }
     offset += 15;
     
     // Auth Token (325 bytes, Base64 string, null-terminated)
     const tokenBuf = Buffer.from(authToken, 'ascii');
-    tokenBuf.copy(packet, offset, 0, Math.min(tokenBuf.length, 324));
+    const tokenLen = Math.min(tokenBuf.length, 324);
+    tokenBuf.copy(packet, offset, 0, tokenLen);
+    // Ensure null terminator at the end
+    if (tokenLen < 324) {
+        packet[offset + tokenLen] = 0;
+    }
     
     return packet;
 }
