@@ -1,0 +1,9 @@
+{
+    "name": "shared-accounts",
+    "version": "1.0.0",
+    "description": "Sistema de compartilhamento de contas Ragnarok com TOTP e permissões granulares",
+    "author": "BeeWiki",
+    "main": "index.js",
+    "commands": ["conta"],
+    "dependencies": []
+}

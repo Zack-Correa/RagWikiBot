@@ -323,6 +323,44 @@ function clearUserAlerts(userId) {
     return removed;
 }
 
+/**
+ * Finds alerts older than specified days
+ * @param {number} daysOld - Minimum age in days (default: 30)
+ * @returns {Array} Array of old alerts
+ */
+function findOldAlerts(daysOld = 30) {
+    const data = loadAlerts();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+    
+    const oldAlerts = data.alerts.filter(alert => {
+        const createdAt = new Date(alert.createdAt);
+        return createdAt < cutoffDate;
+    });
+    
+    return oldAlerts;
+}
+
+/**
+ * Removes alerts by IDs (without user verification - for cleanup)
+ * @param {Array<string>} alertIds - Array of alert IDs to remove
+ * @returns {number} Number of alerts removed
+ */
+function removeAlertsByIds(alertIds) {
+    const data = loadAlerts();
+    const initialLength = data.alerts.length;
+    
+    data.alerts = data.alerts.filter(a => !alertIds.includes(a.id));
+    
+    const removed = initialLength - data.alerts.length;
+    if (removed > 0) {
+        saveAlerts(data);
+        logger.info('Alerts removed by IDs', { removed, alertIds });
+    }
+    
+    return removed;
+}
+
 module.exports = {
     loadAlerts,
     saveAlerts,
@@ -337,5 +375,7 @@ module.exports = {
     getLowestPriceSeen,
     updateLastCheck,
     getStats,
-    clearUserAlerts
+    clearUserAlerts,
+    findOldAlerts,
+    removeAlertsByIds
 };

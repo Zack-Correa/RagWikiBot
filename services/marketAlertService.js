@@ -8,9 +8,11 @@ const alertStorage = require('../utils/alertStorage');
 const configStorage = require('../utils/configStorage');
 const gnjoy = require('../integrations/database/gnjoy');
 const { sleep } = require('../utils/helpers');
+const intelligentStrategy = require('./intelligentQueryStrategy');
 
 let client = null;
 let intervalId = null;
+let cleanupIntervalId = null;
 let isRunning = false;
 let currentIntervalMs = null;
 
@@ -53,6 +55,9 @@ function start() {
     logger.info('Market alert service started', { 
         intervalMinutes: currentIntervalMs / 60000 
     });
+    
+    // Start cleanup interval (run once per day)
+    startCleanupInterval();
 }
 
 /**
@@ -83,8 +88,41 @@ function stop() {
     if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
-        logger.info('Market alert service stopped');
     }
+    
+    if (cleanupIntervalId) {
+        clearInterval(cleanupIntervalId);
+        cleanupIntervalId = null;
+    }
+    
+    logger.info('Market alert service stopped');
+}
+
+/**
+ * Starts the cleanup interval (runs once per day)
+ */
+function startCleanupInterval() {
+    if (cleanupIntervalId) {
+        logger.warn('Cleanup interval already running');
+        return;
+    }
+    
+    // Run cleanup once per day (24 hours)
+    const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    
+    // Run first cleanup after 1 hour
+    setTimeout(() => {
+        cleanupOldAlerts();
+    }, 60 * 60 * 1000);
+    
+    // Then run daily
+    cleanupIntervalId = setInterval(() => {
+        cleanupOldAlerts();
+    }, CLEANUP_INTERVAL_MS);
+    
+    logger.info('Cleanup interval started', { 
+        intervalHours: CLEANUP_INTERVAL_MS / (60 * 60 * 1000) 
+    });
 }
 
 /**
@@ -116,16 +154,75 @@ async function runAlertCheck() {
             totalAlerts: groups.reduce((sum, g) => sum + g.alerts.length, 0)
         });
         
+        // Use intelligent prioritization
+        const prioritizedGroups = intelligentStrategy.prioritizeGroups(groups);
+        
+        logger.debug('Groups prioritized', {
+            originalOrder: groups.map(g => g.searchTerm),
+            prioritizedOrder: prioritizedGroups.map(g => g.searchTerm)
+        });
+        
         let notificationsSent = 0;
         let errorsCount = 0;
+        let skippedCount = 0;
+        let cacheHits = 0;
         
-        for (const group of groups) {
+        for (const group of prioritizedGroups) {
             try {
-                // Search the market for this group
-                const results = await gnjoy.searchMarket(group.searchTerm, {
-                    storeType: group.storeType,
-                    server: group.server
-                });
+                // Check if query should be skipped
+                const skipCheck = intelligentStrategy.shouldSkipQuery(
+                    group.searchTerm,
+                    group.server,
+                    group.storeType
+                );
+                
+                if (skipCheck.shouldSkip) {
+                    skippedCount++;
+                    logger.debug('Skipping query (intelligent strategy)', {
+                        searchTerm: group.searchTerm,
+                        server: group.server,
+                        storeType: group.storeType,
+                        reason: skipCheck.reason
+                    });
+                    continue;
+                }
+                
+                // Try to get cached result first
+                let results = intelligentStrategy.getCachedResult(
+                    group.searchTerm,
+                    group.server,
+                    group.storeType
+                );
+                
+                if (results) {
+                    cacheHits++;
+                    logger.debug('Using cached result for group', {
+                        searchTerm: group.searchTerm,
+                        server: group.server,
+                        storeType: group.storeType
+                    });
+                } else {
+                    // Search the market for this group
+                    results = await gnjoy.searchMarket(group.searchTerm, {
+                        storeType: group.storeType,
+                        server: group.server
+                    });
+                    
+                    // Cache the result
+                    intelligentStrategy.cacheResult(
+                        group.searchTerm,
+                        group.server,
+                        group.storeType,
+                        results
+                    );
+                }
+                
+                // Record that we checked this group
+                intelligentStrategy.recordCheck(
+                    group.searchTerm,
+                    group.server,
+                    group.storeType
+                );
                 
                 if (results.list && results.list.length > 0) {
                     // Process each alert in this group INDEPENDENTLY
@@ -175,7 +272,9 @@ async function runAlertCheck() {
         const duration = Date.now() - startTime;
         logger.info('Market alert check completed', {
             duration: `${duration}ms`,
-            groupsChecked: groups.length,
+            groupsChecked: groups.length - skippedCount,
+            groupsSkipped: skippedCount,
+            cacheHits,
             notificationsSent,
             errors: errorsCount
         });
@@ -423,14 +522,277 @@ async function forceCheck() {
 function getStatus() {
     const stats = alertStorage.getStats();
     const config = configStorage.getFullConfig();
+    const cacheStats = intelligentStrategy.getCacheStats();
+    
     return {
         running: !!intervalId,
         isChecking: isRunning,
         intervalMinutes: config.checkIntervalMinutes,
         cooldownMinutes: config.cooldownMinutes,
         requestDelayMs: config.requestDelayMs,
+        intelligentStrategy: {
+            enabled: true,
+            cacheSize: cacheStats.cacheSize,
+            groupStatsSize: cacheStats.groupStatsSize
+        },
         ...stats
     };
+}
+
+/**
+ * Sends a notification to user about alert expiration
+ * @param {Object} alert - The alert object
+ * @returns {boolean} True if sent successfully
+ */
+async function sendExpirationNotification(alert) {
+    try {
+        const user = await client.users.fetch(alert.userId);
+        
+        if (!user) {
+            logger.warn('Could not find user for expiration notification', { userId: alert.userId });
+            return false;
+        }
+        
+        const { EmbedBuilder } = require('discord.js');
+        const storeTypeLabel = gnjoy.getStoreTypeLabel(alert.storeType);
+        
+        const createdAt = new Date(alert.createdAt);
+        const daysOld = Math.floor((Date.now() - createdAt.getTime()) / (24 * 60 * 60 * 1000));
+        
+        const embed = new EmbedBuilder()
+            .setColor('#ff6b6b')
+            .setTitle('⏰ Alerta Expirado')
+            .setDescription(
+                `Seu alerta de mercado foi removido automaticamente por estar inativo há mais de 30 dias.\n\n` +
+                `**Detalhes do alerta removido:**`
+            )
+            .addFields({
+                name: '📋 Configuração',
+                value: [
+                    `**Item:** ${alert.searchTerm}`,
+                    `**Tipo:** ${storeTypeLabel}`,
+                    `**Servidor:** ${alert.server}`,
+                    alert.maxPrice ? `**Preço máx:** ${gnjoy.formatPrice(alert.maxPrice)}z` : null,
+                    alert.minQuantity ? `**Qtd mín:** ${alert.minQuantity}` : null,
+                    `**Criado em:** <t:${Math.floor(createdAt.getTime() / 1000)}:F>`,
+                    `**Idade:** ${daysOld} dias`,
+                    alert.notificationCount > 0 ? `**Notificações enviadas:** ${alert.notificationCount}` : null
+                ].filter(Boolean).join('\n'),
+                inline: false
+            })
+            .addFields({
+                name: '💡 Dica',
+                value: 'Você pode criar um novo alerta a qualquer momento usando `/alerta-mercado criar`',
+                inline: false
+            })
+            .setTimestamp()
+            .setFooter({ 
+                text: 'Alertas antigos são removidos automaticamente após 30 dias de inatividade' 
+            });
+        
+        await user.send({ embeds: [embed] });
+        
+        logger.info('Expiration notification sent', { 
+            alertId: alert.id, 
+            userId: alert.userId,
+            daysOld
+        });
+        
+        return true;
+    } catch (error) {
+        // User might have DMs disabled
+        if (error.code === 50007) {
+            logger.warn('Cannot send expiration DM to user (DMs disabled)', { userId: alert.userId });
+        } else {
+            logger.error('Error sending expiration notification', { 
+                alertId: alert.id, 
+                error: error.message 
+            });
+        }
+        return false;
+    }
+}
+
+/**
+ * Cleans up old alerts (30+ days) and notifies users
+ * @param {number} daysOld - Minimum age in days (default: 30)
+ * @returns {Object} Cleanup statistics
+ */
+async function cleanupOldAlerts(daysOld = 30) {
+    if (!client) {
+        logger.warn('Cannot cleanup alerts - service not initialized');
+        return { cleaned: 0, notified: 0, errors: 0 };
+    }
+    
+    try {
+        logger.info('Starting cleanup of old alerts', { daysOld });
+        
+        const oldAlerts = alertStorage.findOldAlerts(daysOld);
+        
+        if (oldAlerts.length === 0) {
+            logger.debug('No old alerts to clean up');
+            return { cleaned: 0, notified: 0, errors: 0 };
+        }
+        
+        logger.info('Found old alerts to clean', { count: oldAlerts.length });
+        
+        let notified = 0;
+        let errors = 0;
+        const alertIdsToRemove = [];
+        
+        // Group alerts by user to avoid duplicate notifications
+        const alertsByUser = {};
+        for (const alert of oldAlerts) {
+            if (!alertsByUser[alert.userId]) {
+                alertsByUser[alert.userId] = [];
+            }
+            alertsByUser[alert.userId].push(alert);
+        }
+        
+        // Send notifications and collect alert IDs
+        for (const [userId, userAlerts] of Object.entries(alertsByUser)) {
+            try {
+                // Send one notification per user with all their expired alerts
+                const sent = await sendBulkExpirationNotification(userId, userAlerts);
+                if (sent) {
+                    notified++;
+                }
+                
+                // Collect all alert IDs for this user
+                userAlerts.forEach(alert => {
+                    alertIdsToRemove.push(alert.id);
+                });
+                
+                // Small delay between users to avoid rate limiting
+                await sleep(500);
+            } catch (error) {
+                errors++;
+                logger.warn('Error processing user alerts for cleanup', {
+                    userId,
+                    error: error.message
+                });
+                // Still collect alert IDs even if notification failed
+                userAlerts.forEach(alert => {
+                    alertIdsToRemove.push(alert.id);
+                });
+            }
+        }
+        
+        // Remove all old alerts
+        const removed = alertStorage.removeAlertsByIds(alertIdsToRemove);
+        
+        logger.info('Cleanup completed', {
+            oldAlertsFound: oldAlerts.length,
+            removed,
+            usersNotified: notified,
+            errors
+        });
+        
+        return {
+            cleaned: removed,
+            notified,
+            errors
+        };
+    } catch (error) {
+        logger.error('Error during cleanup', { error: error.message });
+        return { cleaned: 0, notified: 0, errors: 1 };
+    }
+}
+
+/**
+ * Sends a bulk expiration notification for multiple alerts
+ * @param {string} userId - User ID
+ * @param {Array} alerts - Array of expired alerts
+ * @returns {boolean} True if sent successfully
+ */
+async function sendBulkExpirationNotification(userId, alerts) {
+    try {
+        const user = await client.users.fetch(userId);
+        
+        if (!user) {
+            logger.warn('Could not find user for bulk expiration notification', { userId });
+            return false;
+        }
+        
+        const { EmbedBuilder } = require('discord.js');
+        
+        // If only one alert, use detailed notification
+        if (alerts.length === 1) {
+            return await sendExpirationNotification(alerts[0]);
+        }
+        
+        // Multiple alerts - create summary
+        const embed = new EmbedBuilder()
+            .setColor('#ff6b6b')
+            .setTitle('⏰ Alertas Expirados')
+            .setDescription(
+                `**${alerts.length}** de seus alertas foram removidos automaticamente por estarem inativos há mais de 30 dias.\n\n` +
+                `**Detalhes dos alertas removidos:**`
+            )
+            .setTimestamp();
+        
+        // Add each alert as a field (limit to first 10 to avoid embed size limits)
+        const alertsToShow = alerts.slice(0, 10);
+        const alertsList = alertsToShow.map((alert, index) => {
+            const storeTypeLabel = gnjoy.getStoreTypeLabel(alert.storeType);
+            const createdAt = new Date(alert.createdAt);
+            const daysOld = Math.floor((Date.now() - createdAt.getTime()) / (24 * 60 * 60 * 1000));
+            
+            return `**${index + 1}.** ${alert.searchTerm} (${storeTypeLabel}, ${alert.server})\n` +
+                   `   Criado há ${daysOld} dias | ${alert.notificationCount || 0} notificação(ões)`;
+        }).join('\n\n');
+        
+        embed.addFields({
+            name: '📋 Alertas Removidos',
+            value: alertsList.substring(0, 1024),
+            inline: false
+        });
+        
+        if (alerts.length > 10) {
+            embed.addFields({
+                name: '\u200b',
+                value: `*... e mais ${alerts.length - 10} alerta(s)*`,
+                inline: false
+            });
+        }
+        
+        embed.addFields({
+            name: '💡 Dica',
+            value: 'Você pode criar novos alertas a qualquer momento usando `/alerta-mercado criar`',
+            inline: false
+        });
+        
+        embed.setFooter({ 
+            text: 'Alertas antigos são removidos automaticamente após 30 dias de inatividade' 
+        });
+        
+        await user.send({ embeds: [embed] });
+        
+        logger.info('Bulk expiration notification sent', { 
+            userId,
+            alertCount: alerts.length
+        });
+        
+        return true;
+    } catch (error) {
+        if (error.code === 50007) {
+            logger.warn('Cannot send expiration DM to user (DMs disabled)', { userId });
+        } else {
+            logger.error('Error sending bulk expiration notification', { 
+                userId, 
+                error: error.message 
+            });
+        }
+        return false;
+    }
+}
+
+/**
+ * Clears the intelligent query cache (useful for manual refresh)
+ */
+function clearCache() {
+    intelligentStrategy.clearCache();
+    logger.info('Intelligent query cache cleared');
 }
 
 module.exports = {
@@ -439,5 +801,7 @@ module.exports = {
     stop,
     restart,
     forceCheck,
-    getStatus
+    getStatus,
+    clearCache,
+    cleanupOldAlerts
 };

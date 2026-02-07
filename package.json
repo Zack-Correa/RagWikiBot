@@ -10,10 +10,7 @@
 		"reset": "node scripts/reset-commands.js",
 		"reset:deploy": "node scripts/reset-commands.js --deploy",
 		"list-guilds": "node scripts/list-guilds.js",
-		"test": "jest",
-		"test:watch": "jest --watch",
-		"test:coverage": "jest --coverage",
-		"test:integration": "jest --testPathPattern=integration --testTimeout=30000"
+		"test": "echo \"Error: no test specified\" && exit 1"
 	},
 	"repository": {
 		"type": "git",
@@ -32,17 +29,14 @@
 		"node": ">=16.0.0"
 	},
 	"dependencies": {
-		"adm-zip": "^0.5.16",
-		"archiver": "^7.0.1",
 		"axios": "^1.13.2",
 		"cheerio": "^1.1.2",
 		"discord.js": "^14.24.2",
 		"dotenv": "^17.2.3",
 		"express": "^5.2.1",
-		"express-session": "^1.19.0"
-	},
-	"devDependencies": {
-		"jest": "^30.2.0",
-		"nodemon": "^3.1.11"
+		"express-session": "^1.19.0",
+		"jimp": "^1.6.0",
+		"jsqr": "^1.4.0",
+		"otplib": "^12.0.1"
 	}
 }

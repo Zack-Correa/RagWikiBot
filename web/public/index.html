@@ -25,6 +25,7 @@
             <a href="#logs" class="nav-link" data-section="logs">Logs</a>
             <a href="#audit" class="nav-link" data-section="audit">Auditoria</a>
             <a href="#plugins" class="nav-link" data-section="plugins">Plugins</a>
+            <a href="#accounts" class="nav-link" data-section="accounts">Contas</a>
             <a href="/logout" class="nav-link logout">Sair</a>
         </div>
     </nav>
@@ -592,6 +593,31 @@
                     </div>
                 </form>
             </div>
+
+            <!-- ENV Editor -->
+            <div class="config-card" style="margin-top: 20px;">
+                <div class="env-editor-header">
+                    <h3>⚙️ Variáveis de Ambiente (.env)</h3>
+                    <div class="env-editor-actions">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-reload-env">🔄 Recarregar</button>
+                    </div>
+                </div>
+                
+                <div class="env-editor-warning">
+                    <strong>⚠️ Cuidado:</strong> Alterar estas variáveis pode afetar o funcionamento do bot. 
+                    Valores sensíveis são mascarados por segurança — deixe-os como estão para manter o valor atual.
+                    <strong>Mudanças requerem reinício do bot para ter efeito.</strong>
+                </div>
+
+                <div id="env-editor-container">
+                    <div class="loading">Carregando variáveis...</div>
+                </div>
+
+                <div class="form-actions" style="margin-top: 15px;">
+                    <button type="button" class="btn btn-primary" id="btn-save-env">💾 Salvar Variáveis</button>
+                    <span class="env-save-hint" id="env-save-hint" style="display: none;"></span>
+                </div>
+            </div>
         </section>
 
         <!-- Permissions Section -->
@@ -871,6 +897,322 @@
                 <div class="loading">Carregando...</div>
             </div>
         </section>
+
+        <!-- Shared Accounts Section -->
+        <section id="accounts" class="section">
+            <h2>🔐 Contas Compartilhadas</h2>
+            
+            <div class="accounts-plugin-status" id="accounts-plugin-status">
+                <div class="alert alert-warning">
+                    Verificando status do plugin...
+                </div>
+            </div>
+            
+            <div class="accounts-content" id="accounts-content" style="display: none;">
+                <!-- Stats -->
+                <div class="dashboard-stats" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="dash-stat-card">
+                        <div class="dash-stat-value" id="stat-total-accounts">0</div>
+                        <div class="dash-stat-label">Total de Contas</div>
+                    </div>
+                    <div class="dash-stat-card">
+                        <div class="dash-stat-value" id="stat-accounts-with-totp">0</div>
+                        <div class="dash-stat-label">Com TOTP</div>
+                    </div>
+                    <div class="dash-stat-card">
+                        <div class="dash-stat-value" id="stat-accounts-with-password">0</div>
+                        <div class="dash-stat-label">Com Senha</div>
+                    </div>
+                    <div class="dash-stat-card">
+                        <div class="dash-stat-value" id="stat-total-permissions">0</div>
+                        <div class="dash-stat-label">Permissões</div>
+                    </div>
+                </div>
+
+                <!-- Main Grid Layout -->
+                <div class="dashboard-grid">
+                    <!-- Left Column - Create Account -->
+                    <div class="dashboard-col">
+                        <div class="dash-card">
+                            <div class="dash-card-header">
+                                <h3>➕ Criar Nova Conta</h3>
+                            </div>
+                            <div class="dash-card-body">
+                                <form id="create-account-form">
+                                    <div class="form-group">
+                                        <label for="account-name">Nome/Descrição *</label>
+                                        <input type="text" id="account-name" placeholder="Ex: Conta Principal" required style="max-width: 100%;">
+                                    </div>
+                                    <div class="form-row" style="gap: 15px;">
+                                        <div class="form-group" style="flex: 1;">
+                                            <label for="account-login">Login *</label>
+                                            <input type="text" id="account-login" placeholder="Email ou usuário" required style="max-width: 100%;">
+                                        </div>
+                                        <div class="form-group" style="flex: 0 0 140px;">
+                                            <label for="account-server">Servidor</label>
+                                            <select id="account-server" style="width: 100%; padding: 10px;">
+                                                <option value="FREYA">Freya</option>
+                                                <option value="NIDHOGG">Nidhogg</option>
+                                                <option value="YGGDRASIL">Yggdrasil</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="form-row" style="gap: 15px;">
+                                        <div class="form-group" style="flex: 1;">
+                                            <label for="account-password">Senha</label>
+                                            <input type="password" id="account-password" placeholder="Senha da conta" style="max-width: 100%;">
+                                        </div>
+                                        <div class="form-group" style="flex: 1;">
+                                            <label for="account-kafra">Senha Kafra</label>
+                                            <input type="password" id="account-kafra" placeholder="Senha do armazém" style="max-width: 100%;">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="account-totp">Secret TOTP</label>
+                                        <div class="totp-input-group">
+                                            <input type="text" id="account-totp" placeholder="Código base32 do Google Authenticator" style="flex: 1;">
+                                            <label class="btn btn-secondary btn-qr-upload" for="account-totp-qr" title="Importar via QR Code">
+                                                📷 QR Code
+                                            </label>
+                                            <input type="file" id="account-totp-qr" accept="image/*" style="display: none;">
+                                        </div>
+                                        <small>Código secreto para gerar OTPs (opcional) — ou importe de um QR Code</small>
+                                        <div class="qr-decode-status" id="create-qr-status" style="display: none;"></div>
+                                    </div>
+                                </form>
+                            </div>
+                            <div class="dash-card-footer">
+                                <button type="submit" form="create-account-form" class="btn btn-primary">Criar Conta</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column - Quick Info -->
+                    <div class="dashboard-col">
+                        <div class="dash-card">
+                            <div class="dash-card-header">
+                                <h3>ℹ️ Informações</h3>
+                            </div>
+                            <div class="dash-card-body">
+                                <div class="dash-info-list">
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Criptografia</span>
+                                        <span class="dash-info-value">AES-256-GCM</span>
+                                    </div>
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Autenticação</span>
+                                        <span class="dash-info-value">TOTP (RFC 6238)</span>
+                                    </div>
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Acesso</span>
+                                        <span class="dash-info-value">Via Discord DM</span>
+                                    </div>
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Comando</span>
+                                        <code class="dash-info-value">/conta</code>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dash-card">
+                            <div class="dash-card-header">
+                                <h3>🔑 Permissões</h3>
+                            </div>
+                            <div class="dash-card-body">
+                                <div class="dash-info-list">
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Dono</span>
+                                        <span class="dash-info-value" style="color: var(--primary-color);">Acesso total</span>
+                                    </div>
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Allow</span>
+                                        <span class="dash-info-value" style="color: var(--success-color);">Permite visualizar</span>
+                                    </div>
+                                    <div class="dash-info-row">
+                                        <span class="dash-info-label">Deny</span>
+                                        <span class="dash-info-value" style="color: var(--danger-color);">Bloqueia acesso</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Accounts List -->
+                <div class="dash-card" style="margin-top: 20px;">
+                    <div class="dash-card-header">
+                        <h3>📋 Contas Cadastradas</h3>
+                        <div class="accounts-filters">
+                            <select id="filter-account-server">
+                                <option value="">Todos os servidores</option>
+                                <option value="FREYA">Freya</option>
+                                <option value="NIDHOGG">Nidhogg</option>
+                                <option value="YGGDRASIL">Yggdrasil</option>
+                            </select>
+                            <button class="btn btn-secondary btn-sm" id="btn-refresh-accounts">🔄 Atualizar</button>
+                        </div>
+                    </div>
+                    <div class="dash-card-body">
+                        <div class="accounts-grid" id="accounts-grid">
+                            <div class="loading">Carregando contas...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Access Logs Section -->
+                <div class="dash-card" style="margin-top: 20px;">
+                    <div class="dash-card-header">
+                        <h3>📊 Histórico de Acessos</h3>
+                        <div class="logs-filters">
+                            <select id="filter-logs-account">
+                                <option value="">Todas as contas</option>
+                            </select>
+                            <select id="filter-logs-limit">
+                                <option value="25">Últimos 25</option>
+                                <option value="50" selected>Últimos 50</option>
+                                <option value="100">Últimos 100</option>
+                            </select>
+                            <button class="btn btn-secondary btn-sm" id="btn-refresh-logs">🔄 Atualizar</button>
+                        </div>
+                    </div>
+                    <div class="dash-card-body">
+                        <div class="access-logs-stats" style="margin-bottom: 15px;">
+                            <span class="logs-stat">Total de registros: <strong id="stat-total-logs">0</strong></span>
+                        </div>
+                        <div class="access-logs-table-container">
+                            <table class="access-logs-table" id="access-logs-table">
+                                <thead>
+                                    <tr>
+                                        <th>Data/Hora</th>
+                                        <th>Conta</th>
+                                        <th>Usuário</th>
+                                        <th>Ação</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="access-logs-body">
+                                    <tr>
+                                        <td colspan="4" class="loading">Carregando logs...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="access-logs-empty" id="access-logs-empty" style="display: none;">
+                            <p>📭 Nenhum acesso registrado ainda.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Edit Account Modal -->
+        <div id="edit-account-modal" class="modal" style="display: none;">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h3>✏️ Editar Conta</h3>
+                    <button class="modal-close" onclick="closeEditAccount()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="edit-account-form">
+                        <input type="hidden" id="edit-account-id">
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="edit-account-name">Nome/Descrição *</label>
+                                <input type="text" id="edit-account-name" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-account-server">Servidor</label>
+                                <select id="edit-account-server">
+                                    <option value="FREYA">Freya</option>
+                                    <option value="NIDHOGG">Nidhogg</option>
+                                    <option value="YGGDRASIL">Yggdrasil</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="edit-account-login">Login *</label>
+                                <input type="text" id="edit-account-login" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-account-password">Nova Senha</label>
+                                <input type="password" id="edit-account-password" placeholder="Deixe vazio para manter">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="edit-account-kafra">Nova Senha Kafra</label>
+                                <input type="password" id="edit-account-kafra" placeholder="Deixe vazio para manter">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-account-totp">Novo Secret TOTP</label>
+                                <div class="totp-input-group">
+                                    <input type="text" id="edit-account-totp" placeholder="Deixe vazio para manter" style="flex: 1;">
+                                    <label class="btn btn-secondary btn-qr-upload" for="edit-account-totp-qr" title="Importar via QR Code">
+                                        📷 QR Code
+                                    </label>
+                                    <input type="file" id="edit-account-totp-qr" accept="image/*" style="display: none;">
+                                </div>
+                                <div class="qr-decode-status" id="edit-qr-status" style="display: none;"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="account-status-info">
+                            <span class="status-item" id="edit-has-password">🔑 Senha: -</span>
+                            <span class="status-item" id="edit-has-kafra">🏦 Kafra: -</span>
+                            <span class="status-item" id="edit-has-totp">🔢 TOTP: -</span>
+                        </div>
+                    </form>
+                    
+                    <!-- TOTP Test -->
+                    <div class="account-totp-test">
+                        <h4>🔢 Testar Código OTP</h4>
+                        <div class="totp-test-row">
+                            <button type="button" class="btn btn-secondary" id="btn-generate-totp">Gerar Código</button>
+                            <div class="totp-result" id="totp-result" style="display: none;">
+                                <span class="totp-code" id="totp-code">000000</span>
+                                <span class="totp-timer" id="totp-timer">30s</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Permissions Section -->
+                    <div class="account-permissions-section">
+                        <h4>🔒 Permissões de Acesso</h4>
+                        <p class="section-hint">Defina quem pode acessar esta conta via comando Discord.</p>
+                        
+                        <div class="add-permission-row">
+                            <select id="account-perm-type">
+                                <option value="userId">ID do Usuário</option>
+                                <option value="username">Nome de Usuário</option>
+                                <option value="roleId">Cargo (Role ID)</option>
+                            </select>
+                            <input type="text" id="account-perm-value" placeholder="Digite o valor...">
+                            <select id="account-perm-action">
+                                <option value="allow">✅ Permitir</option>
+                                <option value="deny">❌ Negar</option>
+                            </select>
+                            <button type="button" class="btn btn-primary btn-sm" id="btn-add-account-perm">Adicionar</button>
+                        </div>
+                        
+                        <div class="permissions-legend small">
+                            <span class="legend-item"><span class="perm-badge allow">Permitir</span> Dá acesso à conta</span>
+                            <span class="legend-item"><span class="perm-badge deny">Negar</span> Bloqueia acesso (mesmo com cargo)</span>
+                        </div>
+                        
+                        <div class="account-permissions-list" id="account-permissions-list">
+                            <div class="no-permissions">Nenhuma permissão configurada</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" id="btn-delete-account">Excluir Conta</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeEditAccount()">Cancelar</button>
+                    <button type="button" class="btn btn-primary" id="btn-save-account">Salvar Alterações</button>
+                </div>
+            </div>
+        </div>
     </main>
 
     <div class="toast-container" id="toast-container"></div>

@@ -684,6 +684,21 @@ function updatePluginConfig(pluginName, config) {
     }
 }
 
+/**
+ * Gets a plugin's public API
+ * @param {string} pluginName - Plugin name
+ * @returns {Object|null} Plugin API or null if not enabled
+ */
+function getPluginApi(pluginName) {
+    const plugin = loadedPlugins.get(pluginName);
+    
+    if (!plugin || !plugin.enabled) {
+        return null;
+    }
+    
+    return plugin.module?.api || null;
+}
+
 module.exports = {
     setClient,
     getClient,
@@ -701,6 +716,7 @@ module.exports = {
     getPluginCommandsForDeploy,
     isPluginCommand,
     getPluginInfo,
+    getPluginApi,
     updatePluginConfig,
     // Error tracking
     recordPluginError,

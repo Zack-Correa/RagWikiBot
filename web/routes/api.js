@@ -585,6 +585,340 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    // ==================== ENV EDITOR ENDPOINTS ====================
+
+    /**
+     * ENV variable definitions with metadata for safe editing
+     * sensitive: true means the value will be masked in API responses
+     */
+    const ENV_SCHEMA = [
+        { 
+            group: 'Discord Bot', 
+            icon: '🤖',
+            vars: [
+                { key: 'DISCORD_TOKEN', label: 'Token do Bot', sensitive: true, required: true, help: 'Token do bot Discord (Bot > Token no Developer Portal)' },
+                { key: 'CLIENT_ID', label: 'Client ID', sensitive: false, required: true, help: 'ID do aplicativo Discord' },
+                { key: 'BOT_USER_ID', label: 'Bot User ID', sensitive: false, required: false, help: 'ID de usuário do bot' },
+                { key: 'GUILD_ID', label: 'Guild ID', sensitive: false, required: true, help: 'ID do servidor Discord principal' },
+            ]
+        },
+        {
+            group: 'Painel Admin',
+            icon: '🔧',
+            vars: [
+                { key: 'ADMIN_PASSWORD', label: 'Senha do Admin', sensitive: true, required: true, help: 'Senha de acesso ao painel web' },
+                { key: 'ADMIN_PORT', label: 'Porta', sensitive: false, required: false, help: 'Porta do servidor web (padrão: 3000)' },
+                { key: 'ADMIN_HOST', label: 'Host', sensitive: false, required: false, help: 'Endereço de escuta (padrão: 0.0.0.0)' },
+                { key: 'SESSION_SECRET', label: 'Session Secret', sensitive: true, required: false, help: 'Chave secreta para sessões web' },
+            ]
+        },
+        {
+            group: 'APIs Externas',
+            icon: '🔑',
+            vars: [
+                { key: 'DIVINE_PRIDE_API_KEY', label: 'Divine Pride API Key', sensitive: true, required: false, help: 'Chave da API Divine Pride' },
+                { key: 'LOG_LEVEL', label: 'Nível de Log', sensitive: false, required: false, help: 'DEBUG, INFO, WARN ou ERROR' },
+            ]
+        },
+        {
+            group: 'Salesforce / Agentforce',
+            icon: '☁️',
+            vars: [
+                { key: 'SALESFORCE_CLIENT_ID', label: 'Client ID', sensitive: true, required: false, help: 'Client ID do Salesforce Connected App' },
+                { key: 'SALESFORCE_CLIENT_SECRET', label: 'Client Secret', sensitive: true, required: false, help: 'Client Secret do Salesforce Connected App' },
+                { key: 'SALESFORCE_INSTANCE_URL', label: 'Instance URL', sensitive: false, required: false, help: 'URL da instância Salesforce' },
+                { key: 'AGENTFORCE_AGENT_ID', label: 'Agent ID', sensitive: false, required: false, help: 'ID do agente Agentforce' },
+                { key: 'AGENTFORCE_API_KEY', label: 'API Key', sensitive: true, required: false, help: 'Chave de API do Agentforce' },
+            ]
+        },
+        {
+            group: 'SSL / Certificados',
+            icon: '🔒',
+            vars: [
+                { key: 'SSL_CERT_PATH', label: 'Caminho do Certificado', sensitive: false, required: false, help: 'Caminho do arquivo .pem do certificado' },
+                { key: 'SSL_KEY_PATH', label: 'Caminho da Chave', sensitive: false, required: false, help: 'Caminho do arquivo .pem da chave privada' },
+            ]
+        },
+        {
+            group: 'Criptografia',
+            icon: '🛡️',
+            vars: [
+                { key: 'ENCRYPTION_KEY', label: 'Chave de Criptografia', sensitive: true, required: false, help: 'Chave AES-256 para contas compartilhadas (64 caracteres hex)' },
+            ]
+        }
+    ];
+
+    /**
+     * Masks a sensitive value, showing only the last 4 characters
+     */
+    function maskValue(value) {
+        if (!value || value.length <= 4) return '••••';
+        return '•'.repeat(Math.min(value.length - 4, 30)) + value.slice(-4);
+    }
+
+    /**
+     * Parses .env file into key-value pairs (preserving comments and order)
+     */
+    function parseEnvFile(content) {
+        const entries = [];
+        const lines = content.split('\n');
+        
+        for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // Comments and empty lines
+            if (!trimmed || trimmed.startsWith('#')) {
+                entries.push({ type: 'comment', raw: line });
+                continue;
+            }
+            
+            // Key=value pairs
+            const eqIndex = trimmed.indexOf('=');
+            if (eqIndex > 0) {
+                const key = trimmed.substring(0, eqIndex).trim();
+                const value = trimmed.substring(eqIndex + 1).trim();
+                entries.push({ type: 'var', key, value, raw: line });
+            } else {
+                entries.push({ type: 'comment', raw: line });
+            }
+        }
+        
+        return entries;
+    }
+
+    /**
+     * GET /api/env
+     * Returns .env variables organized by group with sensitive values masked
+     */
+    router.get('/env', (req, res) => {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(__dirname, '../../.env');
+            
+            if (!fs.existsSync(envPath)) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Arquivo .env não encontrado' 
+                });
+            }
+            
+            const content = fs.readFileSync(envPath, 'utf8');
+            const entries = parseEnvFile(content);
+            
+            // Build a map of current values
+            const envMap = {};
+            for (const entry of entries) {
+                if (entry.type === 'var') {
+                    envMap[entry.key] = entry.value;
+                }
+            }
+            
+            // Build response with schema and masked values
+            const groups = ENV_SCHEMA.map(group => ({
+                group: group.group,
+                icon: group.icon,
+                vars: group.vars.map(varDef => ({
+                    key: varDef.key,
+                    label: varDef.label,
+                    sensitive: varDef.sensitive,
+                    required: varDef.required,
+                    help: varDef.help,
+                    value: varDef.sensitive ? maskValue(envMap[varDef.key] || '') : (envMap[varDef.key] || ''),
+                    hasValue: !!(envMap[varDef.key] && envMap[varDef.key].length > 0)
+                }))
+            }));
+            
+            // Find any extra vars not in the schema
+            const knownKeys = new Set(ENV_SCHEMA.flatMap(g => g.vars.map(v => v.key)));
+            const extraVars = entries
+                .filter(e => e.type === 'var' && !knownKeys.has(e.key))
+                .map(e => ({
+                    key: e.key,
+                    label: e.key,
+                    sensitive: false,
+                    required: false,
+                    help: 'Variável adicional',
+                    value: e.value,
+                    hasValue: !!(e.value && e.value.length > 0)
+                }));
+            
+            if (extraVars.length > 0) {
+                groups.push({
+                    group: 'Outras',
+                    icon: '📦',
+                    vars: extraVars
+                });
+            }
+            
+            res.json({
+                success: true,
+                data: { groups }
+            });
+        } catch (error) {
+            logger.error('Error reading env', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/env/reveal/:key
+     * Returns the real (unmasked) value of a sensitive variable
+     */
+    router.get('/env/reveal/:key', (req, res) => {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(__dirname, '../../.env');
+            
+            const { key } = req.params;
+            
+            if (!fs.existsSync(envPath)) {
+                return res.status(404).json({ success: false, error: 'Arquivo .env não encontrado' });
+            }
+            
+            const content = fs.readFileSync(envPath, 'utf8');
+            const entries = parseEnvFile(content);
+            
+            const entry = entries.find(e => e.type === 'var' && e.key === key);
+            
+            if (!entry) {
+                return res.status(404).json({ success: false, error: 'Variável não encontrada' });
+            }
+            
+            logger.info('ENV variable revealed by admin', { key });
+            
+            res.json({
+                success: true,
+                data: { key, value: entry.value }
+            });
+        } catch (error) {
+            logger.error('Error revealing env variable', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/env
+     * Updates .env variables
+     * Body: { variables: { KEY: "value", ... } }
+     * Empty string = remove variable, undefined/null = keep current
+     */
+    router.put('/env', (req, res) => {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(__dirname, '../../.env');
+            
+            const { variables } = req.body;
+            
+            if (!variables || typeof variables !== 'object') {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Body deve conter { variables: { KEY: "value" } }' 
+                });
+            }
+            
+            // Read current file
+            const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+            const entries = parseEnvFile(content);
+            
+            // Build a map of current values for reference
+            const currentMap = {};
+            for (const entry of entries) {
+                if (entry.type === 'var') {
+                    currentMap[entry.key] = entry.value;
+                }
+            }
+            
+            // Track which keys we've updated
+            const updatedKeys = new Set();
+            const changes = [];
+            
+            // Update existing entries
+            for (const entry of entries) {
+                if (entry.type === 'var' && variables[entry.key] !== undefined) {
+                    const newValue = variables[entry.key];
+                    
+                    // Skip if value hasn't changed
+                    if (newValue === entry.value) {
+                        updatedKeys.add(entry.key);
+                        continue;
+                    }
+                    
+                    // Check if the value is a masked placeholder (starts with •)
+                    if (typeof newValue === 'string' && newValue.includes('•')) {
+                        updatedKeys.add(entry.key);
+                        continue; // Keep the current value
+                    }
+                    
+                    const oldValue = entry.value;
+                    entry.value = newValue;
+                    entry.raw = `${entry.key}=${newValue}`;
+                    updatedKeys.add(entry.key);
+                    
+                    // Find if this is a sensitive variable
+                    const isSensitive = ENV_SCHEMA.some(g => 
+                        g.vars.some(v => v.key === entry.key && v.sensitive)
+                    );
+                    
+                    changes.push({
+                        key: entry.key,
+                        from: isSensitive ? maskValue(oldValue) : oldValue,
+                        to: isSensitive ? maskValue(newValue) : newValue
+                    });
+                }
+            }
+            
+            // Add new variables that don't exist yet
+            for (const [key, value] of Object.entries(variables)) {
+                if (!updatedKeys.has(key) && value && !value.includes('•')) {
+                    entries.push({ type: 'var', key, value, raw: `${key}=${value}` });
+                    changes.push({ key, from: null, to: '(new)' });
+                }
+            }
+            
+            // Rebuild the file
+            const newContent = entries.map(e => e.raw).join('\n');
+            
+            // Backup current .env
+            const backupPath = envPath + '.backup';
+            if (fs.existsSync(envPath)) {
+                fs.copyFileSync(envPath, backupPath);
+            }
+            
+            // Write new .env
+            fs.writeFileSync(envPath, newContent, 'utf8');
+            
+            logger.info('ENV file updated by admin', { 
+                changedKeys: changes.map(c => c.key),
+                changeCount: changes.length
+            });
+            
+            if (auditLogger) {
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.CONFIG_UPDATE,
+                    req,
+                    target: auditLogger.createTarget('env', '.env'),
+                    details: { changes: changes.map(c => c.key) }
+                });
+            }
+            
+            res.json({
+                success: true,
+                data: { 
+                    changes,
+                    message: changes.length > 0 
+                        ? `${changes.length} variável(is) atualizada(s). Reinicie o bot para aplicar as mudanças.`
+                        : 'Nenhuma alteração detectada.'
+                }
+            });
+        } catch (error) {
+            logger.error('Error updating env', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== PERMISSIONS ENDPOINTS ====================
 
     /**
@@ -2829,6 +3163,522 @@ module.exports = function createApiRoutes(getDiscordClient) {
             }, 1000);
         } catch (error) {
             logger.error('Error restarting bot', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== SHARED ACCOUNTS ROUTES ====================
+    
+    /**
+     * Helper to get shared-accounts plugin API
+     */
+    function getSharedAccountsApi() {
+        const pluginService = require('../../services/pluginService');
+        return pluginService.getPluginApi('shared-accounts');
+    }
+
+    /**
+     * GET /api/accounts
+     * Returns all shared accounts (without decrypted sensitive data)
+     */
+    router.get('/accounts', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const accounts = api.getAllAccounts();
+            
+            res.json({
+                success: true,
+                data: {
+                    accounts,
+                    total: accounts.length,
+                    servers: api.SERVERS,
+                    permissionTypes: api.PERMISSION_TYPES,
+                    permissionActions: api.PERMISSION_ACTIONS
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting accounts', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== ACCESS LOGS ROUTES ====================
+    // These routes must be defined BEFORE /accounts/:id to avoid conflicts
+
+    /**
+     * GET /api/accounts/logs/all
+     * Returns access logs for all accounts
+     * Query params: limit, accountId, userId
+     */
+    router.get('/accounts/logs/all', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { limit, accountId, userId } = req.query;
+            const logs = api.getAccessLogs({
+                accountId: accountId || undefined,
+                userId: userId || undefined,
+                limit: limit ? parseInt(limit, 10) : 100
+            });
+            
+            res.json({
+                success: true,
+                data: {
+                    logs,
+                    total: logs.length
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting access logs', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/accounts/logs/cleanup
+     * Clears old access logs
+     * Query params: daysOld (default 30)
+     */
+    router.delete('/accounts/logs/cleanup', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { daysOld } = req.query;
+            const deletedCount = api.clearOldAccessLogs(daysOld ? parseInt(daysOld, 10) : 30);
+            
+            logger.info('Access logs cleanup', { deletedCount, daysOld: daysOld || 30 });
+            
+            res.json({
+                success: true,
+                data: {
+                    deletedCount,
+                    message: `${deletedCount} logs antigos removidos`
+                }
+            });
+        } catch (error) {
+            logger.error('Error cleaning up logs', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/qr-decode
+     * Decodes a QR code image and extracts TOTP secret
+     * Body: { image: "data:image/png;base64,..." }
+     */
+    router.post('/accounts/qr-decode', async (req, res) => {
+        try {
+            const { image } = req.body;
+            
+            if (!image) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Imagem é obrigatória' 
+                });
+            }
+            
+            // Extract base64 data from data URL
+            const matches = image.match(/^data:image\/\w+;base64,(.+)$/);
+            if (!matches) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Formato de imagem inválido. Envie uma imagem como data URL base64.' 
+                });
+            }
+            
+            const imageBuffer = Buffer.from(matches[1], 'base64');
+            
+            // Use the existing qrReader module
+            const qrReader = require('../../plugins/shared-accounts/qrReader');
+            
+            // Read QR code from buffer
+            const qrContent = await qrReader.readQRCode(imageBuffer);
+            
+            if (!qrContent) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Não foi possível ler o QR Code. Verifique se a imagem está nítida e contém um QR Code válido.' 
+                });
+            }
+            
+            // Check if it's an otpauth URL
+            if (qrContent.startsWith('otpauth://')) {
+                const totpData = qrReader.extractTOTPFromUrl(qrContent);
+                
+                if (totpData && totpData.secret) {
+                    logger.info('QR code decoded successfully', { 
+                        issuer: totpData.issuer, 
+                        label: totpData.label 
+                    });
+                    
+                    return res.json({
+                        success: true,
+                        data: {
+                            secret: totpData.secret,
+                            issuer: totpData.issuer,
+                            label: totpData.label,
+                            algorithm: totpData.algorithm,
+                            digits: totpData.digits,
+                            period: totpData.period
+                        }
+                    });
+                }
+                
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'O QR Code não contém um secret TOTP válido.' 
+                });
+            }
+            
+            // Maybe it's just a raw base32 secret
+            if (/^[A-Z2-7]+=*$/i.test(qrContent)) {
+                logger.info('QR code decoded as raw base32 secret');
+                
+                return res.json({
+                    success: true,
+                    data: {
+                        secret: qrContent.toUpperCase(),
+                        issuer: null,
+                        label: null
+                    }
+                });
+            }
+            
+            return res.status(400).json({ 
+                success: false, 
+                error: 'O QR Code não contém dados de autenticação TOTP válidos.' 
+            });
+        } catch (error) {
+            logger.error('Error decoding QR code', { error: error.message });
+            res.status(500).json({ success: false, error: `Erro ao processar QR Code: ${error.message}` });
+        }
+    });
+
+    // ==================== INDIVIDUAL ACCOUNT ROUTES ====================
+
+    /**
+     * GET /api/accounts/:id
+     * Returns a single account by ID
+     */
+    router.get('/accounts/:id', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const account = api.getAccount(id);
+            
+            if (!account) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Conta não encontrada' 
+                });
+            }
+            
+            res.json({
+                success: true,
+                data: account
+            });
+        } catch (error) {
+            logger.error('Error getting account', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts
+     * Creates a new shared account
+     * Body: { name, login, password, totpSecret, kafraPassword, server }
+     */
+    router.post('/accounts', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { name, login, password, totpSecret, kafraPassword, server } = req.body;
+            
+            if (!name || !login) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Nome e login são obrigatórios' 
+                });
+            }
+            
+            const account = api.createAccount({
+                name,
+                login,
+                password,
+                totpSecret,
+                kafraPassword,
+                server
+            });
+            
+            logger.info('Account created by admin', { accountId: account.id, name: account.name });
+            
+            res.json({
+                success: true,
+                data: account,
+                message: 'Conta criada com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error creating account', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/accounts/:id
+     * Updates an existing account
+     * Body: { name, login, password, totpSecret, kafraPassword, server }
+     */
+    router.put('/accounts/:id', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const updates = req.body;
+            
+            const account = api.updateAccount(id, updates);
+            
+            logger.info('Account updated by admin', { accountId: id, updates: Object.keys(updates) });
+            
+            res.json({
+                success: true,
+                data: account,
+                message: 'Conta atualizada com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error updating account', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/accounts/:id
+     * Deletes an account
+     */
+    router.delete('/accounts/:id', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const deleted = api.deleteAccount(id);
+            
+            if (!deleted) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Conta não encontrada' 
+                });
+            }
+            
+            logger.info('Account deleted by admin', { accountId: id });
+            
+            res.json({
+                success: true,
+                message: 'Conta removida com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error deleting account', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/:id/permissions
+     * Adds a permission to an account
+     * Body: { type, value, action }
+     */
+    router.post('/accounts/:id/permissions', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const { type, value, action } = req.body;
+            
+            if (!type || !value) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo e valor são obrigatórios' 
+                });
+            }
+            
+            const permission = api.addPermission(id, type, value, action || 'allow');
+            
+            logger.info('Permission added to account by admin', { accountId: id, type, value, action });
+            
+            res.json({
+                success: true,
+                data: permission,
+                message: 'Permissão adicionada com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error adding permission', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/accounts/:id/permissions/:permId
+     * Removes a permission from an account
+     */
+    router.delete('/accounts/:id/permissions/:permId', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id, permId } = req.params;
+            const removed = api.removePermission(id, permId);
+            
+            if (!removed) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Permissão não encontrada' 
+                });
+            }
+            
+            logger.info('Permission removed from account by admin', { accountId: id, permissionId: permId });
+            
+            res.json({
+                success: true,
+                message: 'Permissão removida com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error removing permission', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/:id/totp
+     * Generates current TOTP code for an account (for testing)
+     */
+    router.post('/accounts/:id/totp', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const totp = api.generateTOTP(id);
+            
+            if (!totp) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Não foi possível gerar código TOTP. Verifique se a conta existe e tem TOTP configurado.' 
+                });
+            }
+            
+            logger.info('TOTP generated by admin', { accountId: id });
+            
+            res.json({
+                success: true,
+                data: totp
+            });
+        } catch (error) {
+            logger.error('Error generating TOTP', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/accounts/:id/logs
+     * Returns access logs for a specific account
+     * Query params: limit
+     */
+    router.get('/accounts/:id/logs', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const { limit } = req.query;
+            
+            const logs = api.getAccessLogs({
+                accountId: id,
+                limit: limit ? parseInt(limit, 10) : 50
+            });
+            
+            res.json({
+                success: true,
+                data: {
+                    logs,
+                    total: logs.length
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting account logs', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });
