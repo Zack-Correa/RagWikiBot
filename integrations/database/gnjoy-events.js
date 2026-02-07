@@ -957,19 +957,19 @@ async function scrapeEvents() {
         // Scrape news page
         logger.info('Scraping GNJoy news...');
         const newsHTML = await fetchPage(URLS.NEWS);
-        const newsEvents = parseNewsHTML(newsHTML);
+        const newsEvents = await parseNewsHTML(newsHTML);
         allEvents.push(...newsEvents);
         
         // Scrape events page
         logger.info('Scraping GNJoy events page...');
         const eventsHTML = await fetchPage(URLS.EVENTS);
-        const pageEvents = parseNewsHTML(eventsHTML);
+        const pageEvents = await parseNewsHTML(eventsHTML);
         allEvents.push(...pageEvents);
         
         // Scrape event list
         logger.info('Scraping GNJoy event list...');
         const eventListHTML = await fetchPage(URLS.EVENT_LIST);
-        const listEvents = parseNewsHTML(eventListHTML);
+        const listEvents = await parseNewsHTML(eventListHTML);
         allEvents.push(...listEvents);
         
         // Remove duplicates

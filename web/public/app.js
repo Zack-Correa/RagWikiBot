@@ -34,11 +34,13 @@ document.addEventListener('DOMContentLoaded', () => {
     initLogs();
     initAudit();
     initPlugins();
+    initAccounts();
     
     // Load initial data
     loadStats();
     loadAlerts();
     loadParties();
+    loadAccounts();
     loadConfig();
     loadWhitelist();
     loadNews();
@@ -1531,6 +1533,11 @@ async function clearLogs() {
 function initConfig() {
     document.getElementById('config-form').addEventListener('submit', saveConfig);
     document.getElementById('btn-reset-config').addEventListener('click', resetConfig);
+    document.getElementById('btn-reload-env')?.addEventListener('click', loadEnvEditor);
+    document.getElementById('btn-save-env')?.addEventListener('click', saveEnvVariables);
+    
+    // Load env editor
+    loadEnvEditor();
 }
 
 async function loadConfig() {
@@ -1613,6 +1620,217 @@ async function resetConfig() {
     } catch (error) {
         console.error('Error resetting config:', error);
         showToast('Erro ao restaurar configurações', 'error');
+    }
+}
+
+// ==================== ENV EDITOR ====================
+
+let envOriginalValues = {};
+
+async function loadEnvEditor() {
+    const container = document.getElementById('env-editor-container');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="loading">Carregando variáveis...</div>';
+    
+    try {
+        const response = await fetch('/api/env');
+        const result = await response.json();
+        
+        if (!result.success) {
+            container.innerHTML = `<div class="error">❌ ${result.error}</div>`;
+            return;
+        }
+        
+        const { groups } = result.data;
+        envOriginalValues = {};
+        
+        let html = '';
+        
+        for (const group of groups) {
+            html += `
+                <div class="env-group">
+                    <div class="env-group-header" onclick="toggleEnvGroup(this)">
+                        <span class="env-group-title">${group.icon} ${group.group}</span>
+                        <span class="env-group-count">${group.vars.length} variável(is)</span>
+                        <span class="env-group-toggle">▼</span>
+                    </div>
+                    <div class="env-group-body">
+            `;
+            
+            for (const v of group.vars) {
+                // Store original values for change detection
+                envOriginalValues[v.key] = v.value;
+                
+                const requiredBadge = v.required ? '<span class="env-required">obrigatório</span>' : '';
+                const sensitiveBadge = v.sensitive ? '<span class="env-sensitive">🔒 sensível</span>' : '';
+                const statusDot = v.hasValue 
+                    ? '<span class="env-status-dot defined" title="Definida">●</span>' 
+                    : '<span class="env-status-dot empty" title="Não definida">○</span>';
+                
+                const inputType = v.sensitive ? 'password' : 'text';
+                const placeholder = v.sensitive && v.hasValue 
+                    ? 'Deixe como está para manter o valor atual' 
+                    : (v.help || '');
+                
+                html += `
+                    <div class="env-var-row">
+                        <div class="env-var-header">
+                            <label for="env-${v.key}">
+                                ${statusDot}
+                                <span class="env-var-label">${v.label}</span>
+                                <code class="env-var-key">${v.key}</code>
+                            </label>
+                            <div class="env-var-badges">
+                                ${requiredBadge}
+                                ${sensitiveBadge}
+                            </div>
+                        </div>
+                        <div class="env-var-input-group">
+                            <input 
+                                type="${inputType}" 
+                                id="env-${v.key}" 
+                                data-env-key="${v.key}" 
+                                data-sensitive="${v.sensitive}"
+                                value="${escapeHtml(v.value)}" 
+                                placeholder="${escapeHtml(placeholder)}"
+                                class="env-var-input"
+                                autocomplete="off"
+                            >
+                            ${v.sensitive ? `<button type="button" class="btn-env-toggle" onclick="toggleEnvVisibility('env-${v.key}')" title="Mostrar/ocultar">👁️</button>` : ''}
+                        </div>
+                        ${v.help ? `<small class="env-var-help">${v.help}</small>` : ''}
+                    </div>
+                `;
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+        }
+        
+        container.innerHTML = html;
+        
+    } catch (error) {
+        console.error('Error loading env:', error);
+        container.innerHTML = `<div class="error">❌ Erro ao carregar: ${error.message}</div>`;
+    }
+}
+
+function toggleEnvGroup(header) {
+    const body = header.nextElementSibling;
+    const toggle = header.querySelector('.env-group-toggle');
+    
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        toggle.textContent = '▼';
+    } else {
+        body.style.display = 'none';
+        toggle.textContent = '▶';
+    }
+}
+
+async function toggleEnvVisibility(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    
+    const key = input.dataset.envKey;
+    const isSensitive = input.dataset.sensitive === 'true';
+    
+    if (input.type === 'password') {
+        // Reveal: if value is still masked, fetch the real one
+        if (isSensitive && input.value.includes('•')) {
+            try {
+                const response = await fetch(`/api/env/reveal/${encodeURIComponent(key)}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    input.value = result.data.value;
+                    envOriginalValues[key] = result.data.value;
+                } else {
+                    showToast(result.error || 'Erro ao revelar valor', 'error');
+                    return;
+                }
+            } catch (error) {
+                showToast('Erro ao revelar valor', 'error');
+                return;
+            }
+        }
+        input.type = 'text';
+    } else {
+        input.type = 'password';
+    }
+}
+
+async function saveEnvVariables() {
+    const inputs = document.querySelectorAll('[data-env-key]');
+    const variables = {};
+    let changeCount = 0;
+    
+    inputs.forEach(input => {
+        const key = input.dataset.envKey;
+        const value = input.value;
+        const isSensitive = input.dataset.sensitive === 'true';
+        const original = envOriginalValues[key];
+        
+        // Skip if value contains mask characters (user didn't change it)
+        if (isSensitive && value.includes('•')) {
+            return;
+        }
+        
+        // Skip if value hasn't changed
+        if (value === original) {
+            return;
+        }
+        
+        variables[key] = value;
+        changeCount++;
+    });
+    
+    if (changeCount === 0) {
+        showToast('Nenhuma alteração detectada', 'info');
+        return;
+    }
+    
+    if (!confirm(`Tem certeza que deseja salvar ${changeCount} alteração(ões) no .env?\n\nO bot precisará ser reiniciado para aplicar as mudanças.`)) {
+        return;
+    }
+    
+    const hint = document.getElementById('env-save-hint');
+    
+    try {
+        const response = await fetch('/api/env', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ variables })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(result.data.message, 'success');
+            
+            if (hint) {
+                hint.style.display = 'inline';
+                hint.className = 'env-save-hint success';
+                hint.textContent = '✅ ' + result.data.message;
+                setTimeout(() => { hint.style.display = 'none'; }, 10000);
+            }
+            
+            // Reload the editor to show updated values
+            loadEnvEditor();
+        } else {
+            showToast(result.error || 'Erro ao salvar', 'error');
+            if (hint) {
+                hint.style.display = 'inline';
+                hint.className = 'env-save-hint error';
+                hint.textContent = '❌ ' + (result.error || 'Erro');
+            }
+        }
+    } catch (error) {
+        console.error('Error saving env:', error);
+        showToast('Erro ao salvar variáveis', 'error');
     }
 }
 
@@ -2689,6 +2907,638 @@ async function reloadPlugin(name) {
     }
 }
 
+// ==================== SHARED ACCOUNTS ====================
+
+let currentEditAccountId = null;
+let accountsData = null;
+
+function initAccounts() {
+    document.getElementById('btn-refresh-accounts').addEventListener('click', loadAccounts);
+    document.getElementById('create-account-form').addEventListener('submit', createAccount);
+    document.getElementById('filter-account-server').addEventListener('change', filterAccounts);
+    document.getElementById('btn-save-account').addEventListener('click', saveAccount);
+    document.getElementById('btn-delete-account').addEventListener('click', deleteAccount);
+    document.getElementById('btn-generate-totp').addEventListener('click', generateTOTP);
+    document.getElementById('btn-add-account-perm').addEventListener('click', addAccountPermission);
+    
+    // QR Code upload listeners
+    document.getElementById('account-totp-qr')?.addEventListener('change', (e) => {
+        handleQRCodeUpload(e, 'account-totp', 'create-qr-status');
+    });
+    document.getElementById('edit-account-totp-qr')?.addEventListener('change', (e) => {
+        handleQRCodeUpload(e, 'edit-account-totp', 'edit-qr-status');
+    });
+    
+    // Access logs event listeners
+    document.getElementById('btn-refresh-logs')?.addEventListener('click', loadAccessLogs);
+    document.getElementById('filter-logs-account')?.addEventListener('change', loadAccessLogs);
+    document.getElementById('filter-logs-limit')?.addEventListener('change', loadAccessLogs);
+}
+
+async function loadAccounts() {
+    const statusContainer = document.getElementById('accounts-plugin-status');
+    const contentContainer = document.getElementById('accounts-content');
+    const grid = document.getElementById('accounts-grid');
+    
+    grid.innerHTML = '<div class="loading">Carregando...</div>';
+    
+    try {
+        const response = await fetch('/api/accounts');
+        const result = await response.json();
+        
+        if (result.success) {
+            // Plugin is enabled
+            statusContainer.innerHTML = `
+                <div class="alert alert-success">
+                    <strong>✅ Plugin ativo</strong> - Sistema de contas compartilhadas funcionando normalmente.
+                </div>
+            `;
+            contentContainer.style.display = 'block';
+            
+            accountsData = result.data;
+            const accounts = result.data.accounts;
+            
+            // Update stats
+            document.getElementById('stat-total-accounts').textContent = accounts.length;
+            document.getElementById('stat-accounts-with-totp').textContent = 
+                accounts.filter(a => a.hasTotpSecret).length;
+            document.getElementById('stat-accounts-with-password').textContent = 
+                accounts.filter(a => a.hasPassword).length;
+            
+            // Total permissions across all accounts
+            const totalPermissions = accounts.reduce((sum, a) => sum + (a.permissions?.length || 0), 0);
+            document.getElementById('stat-total-permissions').textContent = totalPermissions;
+            
+            renderAccounts(accounts);
+            
+            // Populate logs filter with accounts
+            populateLogsAccountFilter(accounts);
+            
+            // Load access logs
+            loadAccessLogs();
+        } else {
+            // Plugin not enabled
+            statusContainer.innerHTML = `
+                <div class="alert alert-warning">
+                    <strong>⚠️ Plugin não habilitado</strong><br>
+                    O plugin <code>shared-accounts</code> precisa estar ativado para usar este recurso.<br>
+                    <a href="#plugins" class="nav-link" data-section="plugins">Ir para Plugins →</a>
+                </div>
+            `;
+            statusContainer.style.display = 'block';
+            contentContainer.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading accounts:', error);
+        statusContainer.innerHTML = `
+            <div class="alert alert-error">
+                <strong>❌ Erro ao carregar contas</strong><br>
+                ${error.message}
+            </div>
+        `;
+        statusContainer.style.display = 'block';
+        contentContainer.style.display = 'none';
+    }
+}
+
+/**
+ * Populates the logs filter dropdown with accounts
+ */
+function populateLogsAccountFilter(accounts) {
+    const filterSelect = document.getElementById('filter-logs-account');
+    if (!filterSelect) return;
+    
+    // Keep the "All accounts" option
+    filterSelect.innerHTML = '<option value="">Todas as contas</option>';
+    
+    // Add each account as an option
+    accounts.forEach(account => {
+        const option = document.createElement('option');
+        option.value = account.id;
+        option.textContent = account.name;
+        filterSelect.appendChild(option);
+    });
+}
+
+/**
+ * Loads access logs from the API
+ */
+async function loadAccessLogs() {
+    const tbody = document.getElementById('access-logs-body');
+    const emptyState = document.getElementById('access-logs-empty');
+    const tableContainer = document.querySelector('.access-logs-table-container');
+    
+    if (!tbody) return;
+    
+    tbody.innerHTML = '<tr><td colspan="4" class="loading">Carregando logs...</td></tr>';
+    
+    try {
+        const accountId = document.getElementById('filter-logs-account')?.value || '';
+        const limit = document.getElementById('filter-logs-limit')?.value || '50';
+        
+        let url = `/api/accounts/logs/all?limit=${limit}`;
+        if (accountId) {
+            url += `&accountId=${accountId}`;
+        }
+        
+        const response = await fetch(url);
+        const result = await response.json();
+        
+        if (result.success) {
+            const logs = result.data.logs;
+            
+            // Update stats
+            document.getElementById('stat-total-logs').textContent = result.data.total;
+            
+            if (logs.length === 0) {
+                tableContainer.style.display = 'none';
+                emptyState.style.display = 'block';
+                return;
+            }
+            
+            tableContainer.style.display = 'block';
+            emptyState.style.display = 'none';
+            
+            renderAccessLogs(logs);
+        } else {
+            tbody.innerHTML = `<tr><td colspan="4" class="error">Erro: ${result.error}</td></tr>`;
+        }
+    } catch (error) {
+        console.error('Error loading access logs:', error);
+        tbody.innerHTML = `<tr><td colspan="4" class="error">Erro ao carregar logs: ${error.message}</td></tr>`;
+    }
+}
+
+/**
+ * Renders access logs in the table
+ */
+function renderAccessLogs(logs) {
+    const tbody = document.getElementById('access-logs-body');
+    if (!tbody) return;
+    
+    tbody.innerHTML = logs.map(log => {
+        const date = new Date(log.timestamp);
+        const formattedDate = date.toLocaleDateString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: '2-digit'
+        });
+        const formattedTime = date.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+        
+        const actionLabels = {
+            'view': 'Visualizou',
+            'edit': 'Editou',
+            'create': 'Criou',
+            'delete': 'Deletou',
+            'totp': 'TOTP'
+        };
+        
+        const actionLabel = actionLabels[log.action] || log.action;
+        
+        return `
+            <tr>
+                <td class="log-timestamp">
+                    <div>${formattedDate}</div>
+                    <div>${formattedTime}</div>
+                </td>
+                <td class="log-account">
+                    <span class="log-account-name">${escapeHtml(log.accountName || 'Desconhecida')}</span>
+                    <span class="log-account-id">${log.accountId}</span>
+                </td>
+                <td class="log-user">
+                    <span class="log-username">${escapeHtml(log.username)}</span>
+                    <span class="log-userid">${log.userId}</span>
+                </td>
+                <td class="log-action">
+                    <span class="log-action-badge ${log.action}">${actionLabel}</span>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderAccounts(accounts) {
+    const grid = document.getElementById('accounts-grid');
+    const filterServer = document.getElementById('filter-account-server').value;
+    
+    let filtered = accounts;
+    if (filterServer) {
+        filtered = accounts.filter(a => a.server === filterServer);
+    }
+    
+    if (filtered.length === 0) {
+        grid.innerHTML = `
+            <div class="accounts-empty">
+                <div class="accounts-empty-icon">🔐</div>
+                <h3>Nenhuma conta cadastrada</h3>
+                <p>Use o formulário ao lado para criar a primeira conta.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = filtered.map(account => {
+        const permCount = account.permissions?.length || 0;
+        const permAllowCount = account.permissions?.filter(p => p.action === 'allow').length || 0;
+        const permDenyCount = account.permissions?.filter(p => p.action === 'deny').length || 0;
+        const createdDate = account.createdAt ? new Date(account.createdAt).toLocaleDateString('pt-BR') : '-';
+        
+        // Owner display
+        const ownerHtml = account.ownerId 
+            ? `<div class="account-owner">Dono: ${account.ownerId}</div>` 
+            : '';
+        
+        return `
+            <div class="account-card server-${account.server.toLowerCase()}" onclick="openEditAccount('${account.id}')">
+                <div class="account-header">
+                    <span class="account-name">${escapeHtml(account.name)}</span>
+                    <span class="account-server server-${account.server.toLowerCase()}">${account.server}</span>
+                </div>
+                <div class="account-login">${escapeHtml(account.login)}</div>
+                ${ownerHtml}
+                <div class="account-meta">
+                    <span class="meta-item ${account.hasPassword ? 'active' : 'inactive'}">🔑 Senha</span>
+                    <span class="meta-item ${account.hasKafraPassword ? 'active' : 'inactive'}">🏦 Kafra</span>
+                    <span class="meta-item ${account.hasTotpSecret ? 'active' : 'inactive'}">🔢 TOTP</span>
+                </div>
+                <div class="account-footer">
+                    <div class="account-permissions-summary">
+                        ${permAllowCount > 0 ? `<span class="perm-count perm-allow">✅ ${permAllowCount}</span>` : ''}
+                        ${permDenyCount > 0 ? `<span class="perm-count perm-deny">❌ ${permDenyCount}</span>` : ''}
+                        ${permCount === 0 ? `<span class="perm-count">🔒 Sem permissões</span>` : ''}
+                    </div>
+                    <span class="account-date">📅 ${createdDate}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function filterAccounts() {
+    if (accountsData) {
+        renderAccounts(accountsData.accounts);
+    }
+}
+
+/**
+ * Handles QR code image upload and decodes TOTP secret
+ * @param {Event} event - File input change event
+ * @param {string} targetInputId - ID of the TOTP input to fill
+ * @param {string} statusId - ID of the status element
+ */
+async function handleQRCodeUpload(event, targetInputId, statusId) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const statusEl = document.getElementById(statusId);
+    const targetInput = document.getElementById(targetInputId);
+    
+    // Show loading state
+    statusEl.style.display = 'block';
+    statusEl.className = 'qr-decode-status loading';
+    statusEl.innerHTML = '⏳ Processando QR Code...';
+    
+    try {
+        // Read file as base64
+        const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
+            reader.readAsDataURL(file);
+        });
+        
+        // Send to server for decoding
+        const response = await fetch('/api/accounts/qr-decode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: base64 })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Fill the TOTP input with the decoded secret
+            targetInput.value = result.data.secret;
+            
+            // Show success with details
+            const details = [];
+            if (result.data.issuer) details.push(result.data.issuer);
+            if (result.data.label) details.push(result.data.label);
+            const detailStr = details.length > 0 ? ` (${details.join(' - ')})` : '';
+            
+            statusEl.className = 'qr-decode-status success';
+            statusEl.innerHTML = `✅ Secret TOTP extraído com sucesso!${detailStr}`;
+            
+            showToast('Secret TOTP importado do QR Code!', 'success');
+        } else {
+            statusEl.className = 'qr-decode-status error';
+            statusEl.innerHTML = `❌ ${result.error}`;
+        }
+    } catch (error) {
+        console.error('Error decoding QR code:', error);
+        statusEl.className = 'qr-decode-status error';
+        statusEl.innerHTML = `❌ Erro ao processar: ${error.message}`;
+    }
+    
+    // Reset file input so the same file can be selected again
+    event.target.value = '';
+    
+    // Auto-hide status after 8 seconds
+    setTimeout(() => {
+        statusEl.style.display = 'none';
+    }, 8000);
+}
+
+async function createAccount(e) {
+    e.preventDefault();
+    
+    const data = {
+        name: document.getElementById('account-name').value,
+        login: document.getElementById('account-login').value,
+        password: document.getElementById('account-password').value || undefined,
+        kafraPassword: document.getElementById('account-kafra').value || undefined,
+        totpSecret: document.getElementById('account-totp').value || undefined,
+        server: document.getElementById('account-server').value
+    };
+    
+    try {
+        const response = await fetch('/api/accounts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Conta criada com sucesso!', 'success');
+            document.getElementById('create-account-form').reset();
+            // Hide QR status if visible
+            const qrStatus = document.getElementById('create-qr-status');
+            if (qrStatus) qrStatus.style.display = 'none';
+            loadAccounts();
+        } else {
+            showToast(result.error || 'Erro ao criar conta', 'error');
+        }
+    } catch (error) {
+        console.error('Error creating account:', error);
+        showToast('Erro ao criar conta', 'error');
+    }
+}
+
+function openEditAccount(accountId) {
+    currentEditAccountId = accountId;
+    const account = accountsData.accounts.find(a => a.id === accountId);
+    
+    if (!account) {
+        showToast('Conta não encontrada', 'error');
+        return;
+    }
+    
+    // Fill form
+    document.getElementById('edit-account-id').value = account.id;
+    document.getElementById('edit-account-name').value = account.name;
+    document.getElementById('edit-account-login').value = account.login;
+    document.getElementById('edit-account-server').value = account.server;
+    document.getElementById('edit-account-password').value = '';
+    document.getElementById('edit-account-kafra').value = '';
+    document.getElementById('edit-account-totp').value = '';
+    
+    // Update status
+    document.getElementById('edit-has-password').textContent = `🔑 Senha: ${account.hasPassword ? '✓ Definida' : '✗ Não definida'}`;
+    document.getElementById('edit-has-kafra').textContent = `🏦 Kafra: ${account.hasKafraPassword ? '✓ Definida' : '✗ Não definida'}`;
+    document.getElementById('edit-has-totp').textContent = `🔢 TOTP: ${account.hasTotpSecret ? '✓ Configurado' : '✗ Não configurado'}`;
+    
+    // Hide TOTP result and QR status
+    document.getElementById('totp-result').style.display = 'none';
+    const editQrStatus = document.getElementById('edit-qr-status');
+    if (editQrStatus) editQrStatus.style.display = 'none';
+    
+    // Render permissions
+    renderAccountPermissions(account.permissions || []);
+    
+    // Show modal
+    document.getElementById('edit-account-modal').style.display = 'flex';
+}
+
+function closeEditAccount() {
+    document.getElementById('edit-account-modal').style.display = 'none';
+    currentEditAccountId = null;
+}
+
+async function saveAccount() {
+    if (!currentEditAccountId) return;
+    
+    const updates = {
+        name: document.getElementById('edit-account-name').value,
+        login: document.getElementById('edit-account-login').value,
+        server: document.getElementById('edit-account-server').value
+    };
+    
+    // Only include password fields if they have values
+    const password = document.getElementById('edit-account-password').value;
+    const kafra = document.getElementById('edit-account-kafra').value;
+    const totp = document.getElementById('edit-account-totp').value;
+    
+    if (password) updates.password = password;
+    if (kafra) updates.kafraPassword = kafra;
+    if (totp) updates.totpSecret = totp;
+    
+    try {
+        const response = await fetch(`/api/accounts/${currentEditAccountId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Conta atualizada com sucesso!', 'success');
+            closeEditAccount();
+            loadAccounts();
+        } else {
+            showToast(result.error || 'Erro ao atualizar conta', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving account:', error);
+        showToast('Erro ao atualizar conta', 'error');
+    }
+}
+
+async function deleteAccount() {
+    if (!currentEditAccountId) return;
+    
+    if (!confirm('Tem certeza que deseja excluir esta conta? Esta ação não pode ser desfeita.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/accounts/${currentEditAccountId}`, {
+            method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Conta excluída com sucesso!', 'success');
+            closeEditAccount();
+            loadAccounts();
+        } else {
+            showToast(result.error || 'Erro ao excluir conta', 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting account:', error);
+        showToast('Erro ao excluir conta', 'error');
+    }
+}
+
+async function generateTOTP() {
+    if (!currentEditAccountId) return;
+    
+    try {
+        const response = await fetch(`/api/accounts/${currentEditAccountId}/totp`, {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            document.getElementById('totp-code').textContent = result.data.code;
+            document.getElementById('totp-timer').textContent = `${result.data.remainingSeconds}s`;
+            document.getElementById('totp-result').style.display = 'flex';
+            
+            // Update timer countdown
+            let remaining = result.data.remainingSeconds;
+            const timerInterval = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearInterval(timerInterval);
+                    document.getElementById('totp-timer').textContent = 'Expirado';
+                } else {
+                    document.getElementById('totp-timer').textContent = `${remaining}s`;
+                }
+            }, 1000);
+        } else {
+            showToast(result.error || 'Erro ao gerar código TOTP', 'error');
+        }
+    } catch (error) {
+        console.error('Error generating TOTP:', error);
+        showToast('Erro ao gerar código TOTP', 'error');
+    }
+}
+
+function renderAccountPermissions(permissions) {
+    const container = document.getElementById('account-permissions-list');
+    
+    if (!permissions || permissions.length === 0) {
+        container.innerHTML = '<div class="no-permissions">Nenhuma permissão configurada</div>';
+        return;
+    }
+    
+    container.innerHTML = permissions.map(perm => {
+        const typeLabel = {
+            'userId': '👤 ID',
+            'username': '📝 Usuário',
+            'roleId': '🎭 Cargo'
+        }[perm.type] || perm.type;
+        
+        const actionClass = perm.action === 'allow' ? 'allow' : 'deny';
+        const actionIcon = perm.action === 'allow' ? '✅' : '❌';
+        
+        return `
+            <div class="account-perm-item ${actionClass}">
+                <span class="perm-type">${typeLabel}</span>
+                <span class="perm-value">${escapeHtml(perm.value)}</span>
+                <span class="perm-action">${actionIcon}</span>
+                <button class="btn btn-danger btn-xs" onclick="removeAccountPermission('${perm.id}')">🗑️</button>
+            </div>
+        `;
+    }).join('');
+}
+
+async function addAccountPermission() {
+    if (!currentEditAccountId) return;
+    
+    const type = document.getElementById('account-perm-type').value;
+    const value = document.getElementById('account-perm-value').value.trim();
+    const action = document.getElementById('account-perm-action').value;
+    
+    if (!value) {
+        showToast('Digite um valor para a permissão', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/accounts/${currentEditAccountId}/permissions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, value, action })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Permissão adicionada!', 'success');
+            document.getElementById('account-perm-value').value = '';
+            
+            // Reload account data and re-render permissions
+            const accountResponse = await fetch(`/api/accounts/${currentEditAccountId}`);
+            const accountResult = await accountResponse.json();
+            if (accountResult.success) {
+                renderAccountPermissions(accountResult.data.permissions);
+                // Update local cache
+                const idx = accountsData.accounts.findIndex(a => a.id === currentEditAccountId);
+                if (idx >= 0) {
+                    accountsData.accounts[idx] = accountResult.data;
+                }
+            }
+        } else {
+            showToast(result.error || 'Erro ao adicionar permissão', 'error');
+        }
+    } catch (error) {
+        console.error('Error adding permission:', error);
+        showToast('Erro ao adicionar permissão', 'error');
+    }
+}
+
+async function removeAccountPermission(permId) {
+    if (!currentEditAccountId) return;
+    
+    try {
+        const response = await fetch(`/api/accounts/${currentEditAccountId}/permissions/${permId}`, {
+            method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Permissão removida!', 'success');
+            
+            // Reload account data and re-render permissions
+            const accountResponse = await fetch(`/api/accounts/${currentEditAccountId}`);
+            const accountResult = await accountResponse.json();
+            if (accountResult.success) {
+                renderAccountPermissions(accountResult.data.permissions);
+                // Update local cache
+                const idx = accountsData.accounts.findIndex(a => a.id === currentEditAccountId);
+                if (idx >= 0) {
+                    accountsData.accounts[idx] = accountResult.data;
+                }
+            }
+        } else {
+            showToast(result.error || 'Erro ao remover permissão', 'error');
+        }
+    } catch (error) {
+        console.error('Error removing permission:', error);
+        showToast('Erro ao remover permissão', 'error');
+    }
+}
+
 // Make functions available globally
 window.deleteAlert = deleteAlert;
 window.removeFromWhitelist = removeFromWhitelist;
@@ -2701,3 +3551,6 @@ window.changeAuditPage = changeAuditPage;
 window.enablePlugin = enablePlugin;
 window.disablePlugin = disablePlugin;
 window.reloadPlugin = reloadPlugin;
+window.openEditAccount = openEditAccount;
+window.closeEditAccount = closeEditAccount;
+window.removeAccountPermission = removeAccountPermission;
