@@ -14,7 +14,7 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor('#0099ff')
             .setTitle('📚 Comandos Disponíveis')
-            .setDescription('Lista de comandos do RagWiki Bot')
+            .setDescription('Lista completa de comandos do RagWiki Bot')
             .addFields(
                 {
                     name: '🔍 Busca no Divine Pride',
@@ -23,30 +23,96 @@ module.exports = {
                 },
                 {
                     name: '/buscar-item',
-                    value: 'Busca itens por nome ou ID\n**Exemplos:**\n• `/buscar-item busca:Poring` - busca por nome\n• `/buscar-item busca:501` - busca por ID',
-                    inline: false
+                    value: 'Busca itens por nome ou ID\n**Ex:** `/buscar-item busca:Poring` ou `/buscar-item busca:501`',
+                    inline: true
                 },
                 {
                     name: '/buscar-monstro',
-                    value: 'Busca monstros por nome ou ID\n**Exemplos:**\n• `/buscar-monstro busca:Poring` - busca por nome\n• `/buscar-monstro busca:1002` - busca por ID',
-                    inline: false
+                    value: 'Busca monstros por nome ou ID\n**Ex:** `/buscar-monstro busca:Poring`',
+                    inline: true
                 },
                 {
                     name: '/buscar-mapa',
-                    value: 'Busca mapas por nome ou ID\n**Exemplos:**\n• `/buscar-mapa busca:Prontera` - busca por nome\n• `/buscar-mapa busca:prt_fild01` - busca por ID',
+                    value: 'Busca mapas por nome ou ID\n**Ex:** `/buscar-mapa busca:Prontera`',
+                    inline: true
+                },
+                {
+                    name: '📚 Wiki e Mercado',
+                    value: '\u200b',
                     inline: false
                 },
                 {
-                    name: '📚 Busca na Wiki',
-                    value: '`/wiki termo:Poring` - Busca informações na Browiki',
+                    name: '/wiki',
+                    value: 'Busca informações na Browiki\n**Ex:** `/wiki termo:Poring`',
+                    inline: true
+                },
+                {
+                    name: '/buscar-mercado',
+                    value: 'Busca itens no mercado oficial LATAM\n**Ex:** `/buscar-mercado busca:Adaga tipo:Vendendo servidor:Freya`',
+                    inline: true
+                },
+                {
+                    name: '💰 Preços e Alertas',
+                    value: '\u200b',
                     inline: false
                 },
                 {
-                    name: '📖 Documentação Completa',
-                    value: 'Acesse [GitHub](https://github.com/Zack-Correa/RagWikiBot/blob/dev/README_PT-BR.md) para mais informações',
+                    name: '/alerta-mercado',
+                    value: 'Gerencia alertas de mercado\n**Subcomandos:** `adicionar`, `listar`, `remover`, `limpar`, `status`\n**Ex:** `/alerta-mercado adicionar item:Adaga preco-maximo:10000`',
+                    inline: true
+                },
+                {
+                    name: '/preco-justo',
+                    value: 'Analisa se um preço está justo\n**Ex:** `/preco-justo item:Adaga preco:5000`',
+                    inline: true
+                },
+                {
+                    name: '/historico-preco',
+                    value: 'Mostra histórico de preços\n**Ex:** `/historico-preco item:Adaga dias:7`',
+                    inline: true
+                },
+                {
+                    name: '🔐 Contas Compartilhadas',
+                    value: 'Gerencia contas compartilhadas com TOTP 2FA\n**Subcomandos:** `ver`, `criar`, `editar`, `deletar`, `permissao`, `totp`, `historico`, `listar`\n**Ex:** `/conta criar nome:Minha Conta login:usuario@email.com`\n**Novo!** Configure TOTP via QR Code com `/conta totp`\n**Novo!** Veja histórico de acessos com `/conta historico`',
+                    inline: false
+                },
+                {
+                    name: '👥 Grupos para Instâncias',
+                    value: 'Cria grupos para instâncias com notificações automáticas\n**Subcomandos:** `criar`, `listar`, `entrar`, `sair`, `cancelar`, `sortear`\n**Ex:** `/grupo criar instancia:Torre sem Fim data:08/02 hora:20:00`',
+                    inline: false
+                },
+                {
+                    name: '📊 Status e Notícias',
+                    value: '\u200b',
+                    inline: false
+                },
+                {
+                    name: '/servidor-status',
+                    value: 'Mostra status dos servidores RO LATAM\n**Ex:** `/servidor-status servidor:Freya`',
+                    inline: true
+                },
+                {
+                    name: '/eventos',
+                    value: 'Mostra últimas notícias do GNJoy LATAM',
+                    inline: true
+                },
+                {
+                    name: '⚙️ Administração',
+                    value: '\u200b',
+                    inline: false
+                },
+                {
+                    name: '/plugin',
+                    value: 'Gerencia plugins do bot\n**Subcomandos:** `listar`, `ativar`, `desativar`, `status`',
+                    inline: true
+                },
+                {
+                    name: '📖 Documentação',
+                    value: 'Acesse [GitHub](https://github.com/Zack-Correa/RagWikiBot/blob/dev/README_PT-BR.md) para documentação completa',
                     inline: false
                 }
             )
+            .setFooter({ text: 'Digite / para ver todos os comandos com autocomplete' })
             .setTimestamp();
 
         return interaction.reply({ embeds: [embed] });
