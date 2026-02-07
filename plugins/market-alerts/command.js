@@ -5,12 +5,13 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const alertStorage = require('../utils/alertStorage');
-const marketAlertService = require('../services/marketAlertService');
-const configStorage = require('../utils/configStorage');
-const gnjoy = require('../integrations/database/gnjoy');
-const logger = require('../utils/logger');
-const { COLORS } = require('../utils/constants');
+const alertStorage = require('../../utils/alertStorage');
+const marketAlertService = require('../../services/marketAlertService');
+const configStorage = require('../../utils/configStorage');
+const gnjoy = require('../../integrations/database/gnjoy');
+const logger = require('../../utils/logger');
+const { COLORS } = require('../../utils/constants');
+const { getServerChoices, getStoreTypeChoices } = require('../../utils/commandHelpers');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -31,21 +32,14 @@ module.exports = {
                         .setName('tipo')
                         .setDescription('Tipo de transação')
                         .setRequired(true)
-                        .addChoices(
-                            { name: 'Comprando', value: 'BUY' },
-                            { name: 'Vendendo', value: 'SELL' }
-                        )
+                        .addChoices(...getStoreTypeChoices())
                 )
                 .addStringOption(option =>
                     option
                         .setName('servidor')
                         .setDescription('Servidor')
                         .setRequired(true)
-                        .addChoices(
-                            { name: 'Freya', value: 'FREYA' },
-                            { name: 'Nidhogg', value: 'NIDHOGG' },
-                            { name: 'Yggdrasil', value: 'YGGDRASIL' }
-                        )
+                        .addChoices(...getServerChoices())
                 )
                 .addIntegerOption(option =>
                     option
@@ -160,7 +154,7 @@ async function handleAdd(interaction) {
             minQuantity
         });
 
-        const storeTypeLabel = storeType === 'BUY' ? 'Comprando' : 'Vendendo';
+        const storeTypeLabel = gnjoy.getStoreTypeLabel(storeType);
         
         const embed = new EmbedBuilder()
             .setColor(COLORS.SUCCESS)
@@ -268,7 +262,7 @@ async function handleList(interaction) {
 
     for (const [server, serverAlerts] of Object.entries(byServer)) {
         const alertList = serverAlerts.map(alert => {
-            const storeLabel = alert.storeType === 'BUY' ? '🟢 Comprando' : '🔴 Vendendo';
+            const storeLabel = alert.storeType === 'BUY' ? `🟢 ${gnjoy.getStoreTypeLabel(alert.storeType)}` : `🔴 ${gnjoy.getStoreTypeLabel(alert.storeType)}`;
             const filters = [];
             if (alert.maxPrice) filters.push(`≤${gnjoy.formatPrice(alert.maxPrice)}z`);
             if (alert.minQuantity) filters.push(`≥${alert.minQuantity}un`);

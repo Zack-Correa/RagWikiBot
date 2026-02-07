@@ -8,6 +8,7 @@ const settings = require('../const.json');
 const config = require('../../config');
 const logger = require('../../utils/logger');
 const { APIError } = require('../../utils/errors');
+const apiCache = require('../../utils/apiCache');
 
 // API endpoints
 const ENDPOINTS = {
@@ -59,6 +60,9 @@ async function setupScrapingCookies(language, server = 'LATAM') {
         return cached.cookies;
     }
     
+    // Build fallback cookies directly (skip API calls that often fail)
+    const fallbackCookies = buildFallbackCookies(language, server);
+    
     try {
         // Step 1: Set server
         logger.debug('Setting Divine Pride server', { language, server });
@@ -67,9 +71,11 @@ async function setupScrapingCookies(language, server = 'LATAM') {
             { server: server },
             {
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 },
-                timeout: 10000
+                timeout: 8000,
+                validateStatus: (status) => status < 500
             }
         );
         
@@ -79,7 +85,7 @@ async function setupScrapingCookies(language, server = 'LATAM') {
         logger.debug('Refreshing Divine Pride language', { language, server });
         const languageConfig = config.languages[language.toLowerCase()];
         if (!languageConfig) {
-            logger.warn('Invalid language, using default pt', { language });
+            logger.debug('Invalid language, using default pt', { language });
         }
         
         const languageResponse = await axios.post(
@@ -88,9 +94,11 @@ async function setupScrapingCookies(language, server = 'LATAM') {
             {
                 headers: {
                     'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Cookie': cookies
                 },
-                timeout: 10000
+                timeout: 8000,
+                validateStatus: (status) => status < 500
             }
         );
         
@@ -121,15 +129,37 @@ async function setupScrapingCookies(language, server = 'LATAM') {
         
         return cookies;
     } catch (error) {
-        logger.error('Error setting up Divine Pride cookies', { 
+        // Use WARN level instead of ERROR since bot continues to function
+        logger.warn('Divine Pride cookie setup failed, using fallback', { 
             language,
             server,
             error: error.message 
         });
         
-        // Return empty string on error, allowing scraping to proceed without cookies
-        return '';
+        // Cache the fallback cookies to avoid repeated failed attempts
+        cookieCache.set(cacheKey, {
+            cookies: fallbackCookies,
+            timestamp: Date.now()
+        });
+        
+        // Return fallback cookies that should work for most requests
+        return fallbackCookies;
     }
+}
+
+/**
+ * Builds fallback cookies when API calls fail
+ * @param {string} language - Language code
+ * @param {string} server - Server name
+ * @returns {string} Fallback cookie string
+ */
+function buildFallbackCookies(language, server) {
+    const serverMapping = {
+        'LATAM': 'latam',
+        'BRO': 'bro'
+    };
+    const serverValue = serverMapping[server] || 'latam';
+    return `lang=${language.toLowerCase()}; server=${serverValue}`;
 }
 
 /**
@@ -149,35 +179,59 @@ async function makeItemIdRequest(itemId, language) {
         logger.warn('Divine Pride API key not configured');
     }
 
-    // Always use LATAM server
-    const server = 'LATAM';
-    const endpoint = `${ENDPOINTS.ITEM}${itemId}?apiKey=${apiKey}&server=${server}`;
     const languageConfig = config.languages[language.toLowerCase()];
     const acceptLanguage = languageConfig?.acceptLanguage;
-
-    try {
-        logger.debug('Fetching item by ID', { itemId, language, server, acceptLanguage });
+    
+    // Try multiple servers - some items exist only on specific servers
+    const servers = ['LATAM', 'bRO'];
+    
+    for (const server of servers) {
+        const endpoint = `${ENDPOINTS.ITEM}${itemId}?apiKey=${apiKey}&server=${server}`;
         
-        const headers = {};
-        if (acceptLanguage) {
-            headers['Accept-Language'] = acceptLanguage;
+        try {
+            logger.debug('Fetching item by ID', { itemId, language, server, acceptLanguage });
+            
+            const headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            };
+            if (acceptLanguage) {
+                headers['Accept-Language'] = acceptLanguage;
+            }
+            
+            const response = await axios.get(endpoint, { headers, timeout: 10000 });
+            
+            if (response.data) {
+                logger.debug('Item found', { itemId, server });
+                return response.data;
+            }
+        } catch (error) {
+            // If 404, try next server
+            if (error.response?.status === 404) {
+                logger.debug('Item not found on server, trying next', { itemId, server });
+                
+                // If this is the last server, throw the error
+                if (server === servers[servers.length - 1]) {
+                    logger.warn('Item not found on any server', { itemId, servers });
+                    throw new APIError('Item não encontrado', 404, 'Item não encontrado no banco de dados.');
+                }
+                continue;
+            }
+            
+            // Other errors - log and try next server
+            logger.warn('Error fetching item from server', { itemId, server, error: error.message });
+            
+            if (server === servers[servers.length - 1]) {
+                throw new APIError(
+                    `Erro ao buscar item: ${error.message}`,
+                    error.response?.status,
+                    'Erro ao obter informações do item.'
+                );
+            }
         }
-        
-        const response = await axios.get(endpoint, { headers, timeout: 10000 });
-        return response.data;
-    } catch (error) {
-        logger.error('Error fetching item by ID', { itemId, language, error: error.message });
-        
-        if (error.response?.status === 404) {
-            throw new APIError('Item não encontrado', 404, 'Item não encontrado no banco de dados.');
-        }
-        
-        throw new APIError(
-            `Erro ao buscar item: ${error.message}`,
-            error.response?.status,
-            'Erro ao obter informações do item.'
-        );
     }
+    
+    // Should not reach here, but just in case
+    throw new APIError('Item não encontrado', 404, 'Item não encontrado no banco de dados.');
 }
 
 /**
@@ -298,10 +352,11 @@ async function makeSearchQuery(queryString, language) {
 /**
  * Searches for monster information by ID
  * @param {string} monsterId - Monster ID
+ * @param {string} [language] - Language preference
  * @returns {Promise<Object>} Monster data from API
  * @throws {APIError} If request fails
  */
-async function monsterSearch(monsterId, server = null) {
+async function monsterSearch(monsterId, language = null) {
     if (!monsterId) {
         throw new Error('ID do monstro é obrigatório');
     }
@@ -311,163 +366,221 @@ async function monsterSearch(monsterId, server = null) {
         logger.warn('Divine Pride API key not configured');
     }
 
-    const endpoint = `${ENDPOINTS.MONSTER}${monsterId}?apiKey=${apiKey}`;
-    
-    // Get language preference based on server or default
-    let acceptLanguage = 'pt-BR'; // Default to Portuguese
-    if (server) {
-        const languageConfig = config.languages[server.toLowerCase()];
+    // Get language preference
+    let acceptLanguage = 'pt-BR';
+    if (language) {
+        const languageConfig = config.languages[language.toLowerCase()];
         if (languageConfig?.acceptLanguage) {
             acceptLanguage = languageConfig.acceptLanguage;
         }
     } else {
-        // Use environment variable or default
         acceptLanguage = process.env.API_LANGUAGE || acceptLanguage;
     }
 
-    try {
-        logger.debug('Fetching monster by ID', { monsterId, endpoint, acceptLanguage });
-        const response = await axios.get(endpoint, { 
-            headers: {
-                'Accept-Language': acceptLanguage
-            },
-            timeout: 10000 
-        });
+    // Try multiple servers
+    const servers = ['LATAM', 'bRO'];
+    
+    for (const server of servers) {
+        const endpoint = `${ENDPOINTS.MONSTER}${monsterId}?apiKey=${apiKey}&server=${server}`;
         
-        if (!response.data) {
-            throw new APIError('Resposta vazia da API', 200, 'Nenhum dado retornado para o monstro.');
-        }
+        try {
+            logger.debug('Fetching monster by ID', { monsterId, server, acceptLanguage });
+            const response = await axios.get(endpoint, { 
+                headers: {
+                    'Accept-Language': acceptLanguage,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout: 10000 
+            });
+            
+            if (!response.data) {
+                continue; // Try next server
+            }
 
-        logger.debug('Monster data received', { 
-            monsterId, 
-            dataLength: JSON.stringify(response.data).length,
-            hasName: !!response.data.name,
-            hasGlobalization: !!response.data.globalization,
-            responseKeys: Object.keys(response.data || {})
-        });
-        
-        return response.data;
-    } catch (error) {
-        logger.error('Error fetching monster', { monsterId, error: error.message });
-        
-        if (error.response?.status === 404) {
-            throw new APIError('Monstro não encontrado', 404, 'Monstro não encontrado no banco de dados.');
+            logger.debug('Monster data received', { 
+                monsterId,
+                server,
+                hasName: !!response.data.name
+            });
+            
+            return response.data;
+        } catch (error) {
+            // If 404, try next server
+            if (error.response?.status === 404) {
+                logger.debug('Monster not found on server, trying next', { monsterId, server });
+                
+                if (server === servers[servers.length - 1]) {
+                    logger.warn('Monster not found on any server', { monsterId });
+                    throw new APIError('Monstro não encontrado', 404, 'Monstro não encontrado no banco de dados.');
+                }
+                continue;
+            }
+            
+            logger.warn('Error fetching monster from server', { monsterId, server, error: error.message });
+            
+            if (server === servers[servers.length - 1]) {
+                throw new APIError(
+                    `Erro ao buscar monstro: ${error.message}`,
+                    error.response?.status,
+                    'Erro ao obter informações do monstro.'
+                );
+            }
         }
-        
-        throw new APIError(
-            `Erro ao buscar monstro: ${error.message}`,
-            error.response?.status,
-            'Erro ao obter informações do monstro.'
-        );
     }
+    
+    throw new APIError('Monstro não encontrado', 404, 'Monstro não encontrado no banco de dados.');
 }
 
 /**
  * Searches for map information by ID
  * @param {string} mapId - Map ID
+ * @param {string} [language] - Language preference
  * @returns {Promise<Object>} Map data from API
  * @throws {APIError} If request fails
  */
-async function mapSearch(mapId, server = null) {
+async function mapSearch(mapId, language = null) {
     if (!mapId) {
         throw new Error('ID do mapa é obrigatório');
     }
 
     const apiKey = config.api.divinePride.apiKey;
-    const endpoint = `${ENDPOINTS.MAP}${mapId}?apiKey=${apiKey}`;
     
-    // Get language preference based on server or default
-    let acceptLanguage = 'pt-BR'; // Default to Portuguese
-    if (server) {
-        const languageConfig = config.languages[server.toLowerCase()];
+    // Get language preference
+    let acceptLanguage = 'pt-BR';
+    if (language) {
+        const languageConfig = config.languages[language.toLowerCase()];
         if (languageConfig?.acceptLanguage) {
             acceptLanguage = languageConfig.acceptLanguage;
         }
     } else {
-        // Use environment variable or default
         acceptLanguage = process.env.API_LANGUAGE || acceptLanguage;
     }
 
-    try {
-        logger.debug('Fetching map by ID', { mapId, endpoint, acceptLanguage });
-        const response = await axios.get(endpoint, { 
-            headers: {
-                'Accept-Language': acceptLanguage
-            },
-            timeout: 10000 
-        });
+    // Try multiple servers
+    const servers = ['LATAM', 'bRO'];
+    
+    for (const server of servers) {
+        const endpoint = `${ENDPOINTS.MAP}${mapId}?apiKey=${apiKey}&server=${server}`;
         
-        if (!response.data) {
-            throw new APIError('Resposta vazia da API', 200, 'Nenhum dado retornado para o mapa.');
-        }
+        try {
+            logger.debug('Fetching map by ID', { mapId, server, acceptLanguage });
+            const response = await axios.get(endpoint, { 
+                headers: {
+                    'Accept-Language': acceptLanguage,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout: 10000 
+            });
+            
+            if (!response.data) {
+                continue; // Try next server
+            }
 
-        logger.debug('Map data received', { 
-            mapId,
-            hasName: !!response.data.name,
-            hasMapname: !!response.data.mapname,
-            hasSpawn: !!response.data.spawn,
-            spawnLength: response.data.spawn?.length || 0,
-            npcsLength: response.data.npcs?.length || 0
-        });
-        
-        return response.data;
-    } catch (error) {
-        logger.error('Error fetching map', { mapId, error: error.message });
-        throw new APIError(
-            `Erro ao buscar mapa: ${error.message}`,
-            error.response?.status,
-            'Erro ao obter informações do mapa.'
-        );
+            logger.debug('Map data received', { 
+                mapId,
+                server,
+                hasName: !!response.data.name,
+                hasMapname: !!response.data.mapname
+            });
+            
+            return response.data;
+        } catch (error) {
+            // If 404, try next server
+            if (error.response?.status === 404) {
+                logger.debug('Map not found on server, trying next', { mapId, server });
+                
+                if (server === servers[servers.length - 1]) {
+                    logger.warn('Map not found on any server', { mapId });
+                    throw new APIError('Mapa não encontrado', 404, 'Mapa não encontrado no banco de dados.');
+                }
+                continue;
+            }
+            
+            logger.warn('Error fetching map from server', { mapId, server, error: error.message });
+            
+            if (server === servers[servers.length - 1]) {
+                throw new APIError(
+                    `Erro ao buscar mapa: ${error.message}`,
+                    error.response?.status,
+                    'Erro ao obter informações do mapa.'
+                );
+            }
+        }
     }
+    
+    throw new APIError('Mapa não encontrado', 404, 'Mapa não encontrado no banco de dados.');
 }
 
 /**
  * Searches for skill information by ID
  * @param {string} skillId - Skill ID
- * @param {string} server - Server identifier (optional)
+ * @param {string} [language] - Language preference
  * @returns {Promise<Object>} Skill data from API
  * @throws {APIError} If request fails
  */
-async function skillSearch(skillId, server = null) {
+async function skillSearch(skillId, language = null) {
     if (!skillId) {
         throw new Error('ID da skill é obrigatório');
     }
 
     const apiKey = config.api.divinePride.apiKey;
-    const endpoint = `${ENDPOINTS.SKILL}${skillId}?apiKey=${apiKey}`;
     
-    // Get language preference based on server or default
-    let acceptLanguage = 'pt-BR'; // Default to Portuguese
-    if (server) {
-        const languageConfig = config.languages[server.toLowerCase()];
+    // Get language preference
+    let acceptLanguage = 'pt-BR';
+    if (language) {
+        const languageConfig = config.languages[language.toLowerCase()];
         if (languageConfig?.acceptLanguage) {
             acceptLanguage = languageConfig.acceptLanguage;
         }
     } else {
-        // Use environment variable or default
         acceptLanguage = process.env.API_LANGUAGE || acceptLanguage;
     }
 
-    try {
-        logger.debug('Fetching skill by ID', { skillId, acceptLanguage });
-        const response = await axios.get(endpoint, { 
-            headers: {
-                'Accept-Language': acceptLanguage
-            },
-            timeout: 10000 
-        });
+    // Try multiple servers
+    const servers = ['LATAM', 'bRO'];
+    
+    for (const server of servers) {
+        const endpoint = `${ENDPOINTS.SKILL}${skillId}?apiKey=${apiKey}&server=${server}`;
         
-        // TODO: Implement proper parsing when feature is complete
-        logger.debug('Skill data received', { skillId });
-        return response.data;
-    } catch (error) {
-        logger.error('Error fetching skill', { skillId, error: error.message });
-        throw new APIError(
-            `Erro ao buscar skill: ${error.message}`,
-            error.response?.status,
-            'Erro ao obter informações da skill.'
-        );
+        try {
+            logger.debug('Fetching skill by ID', { skillId, server, acceptLanguage });
+            const response = await axios.get(endpoint, { 
+                headers: {
+                    'Accept-Language': acceptLanguage,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout: 10000 
+            });
+            
+            if (response.data) {
+                logger.debug('Skill data received', { skillId, server });
+                return response.data;
+            }
+        } catch (error) {
+            // If 404, try next server
+            if (error.response?.status === 404) {
+                logger.debug('Skill not found on server, trying next', { skillId, server });
+                
+                if (server === servers[servers.length - 1]) {
+                    logger.warn('Skill not found on any server', { skillId });
+                    throw new APIError('Skill não encontrada', 404, 'Skill não encontrada no banco de dados.');
+                }
+                continue;
+            }
+            
+            logger.warn('Error fetching skill from server', { skillId, server, error: error.message });
+            
+            if (server === servers[servers.length - 1]) {
+                throw new APIError(
+                    `Erro ao buscar skill: ${error.message}`,
+                    error.response?.status,
+                    'Erro ao obter informações da skill.'
+                );
+            }
+        }
     }
+    
+    throw new APIError('Skill não encontrada', 404, 'Skill não encontrada no banco de dados.');
 }
 
 /**
@@ -707,12 +820,90 @@ async function makeMapSearchQuery(queryString, language) {
     }
 }
 
+// ==================== CACHED WRAPPERS ====================
+
+/**
+ * Cached version of makeItemIdRequest
+ */
+async function makeItemIdRequestCached(itemId, language) {
+    const cacheKey = apiCache.generateKey('ITEM_SEARCH', { itemId, language });
+    return apiCache.getOrFetch('ITEM_SEARCH', { itemId, language }, 
+        () => makeItemIdRequest(itemId, language)
+    );
+}
+
+/**
+ * Cached version of makeSearchQuery
+ */
+async function makeSearchQueryCached(queryString, language) {
+    return apiCache.getOrFetch('ITEM_SEARCH', { query: queryString, language, type: 'item' }, 
+        () => makeSearchQuery(queryString, language)
+    );
+}
+
+/**
+ * Cached version of monsterSearch
+ */
+async function monsterSearchCached(monsterId, language = null) {
+    return apiCache.getOrFetch('MONSTER_SEARCH', { monsterId, language }, 
+        () => monsterSearch(monsterId, language)
+    );
+}
+
+/**
+ * Cached version of makeMonsterSearchQuery
+ */
+async function makeMonsterSearchQueryCached(queryString, language) {
+    return apiCache.getOrFetch('MONSTER_SEARCH', { query: queryString, language }, 
+        () => makeMonsterSearchQuery(queryString, language)
+    );
+}
+
+/**
+ * Cached version of mapSearch
+ */
+async function mapSearchCached(mapId, language = null) {
+    return apiCache.getOrFetch('MAP_SEARCH', { mapId, language }, 
+        () => mapSearch(mapId, language)
+    );
+}
+
+/**
+ * Cached version of makeMapSearchQuery
+ */
+async function makeMapSearchQueryCached(queryString, language) {
+    return apiCache.getOrFetch('MAP_SEARCH', { query: queryString, language }, 
+        () => makeMapSearchQuery(queryString, language)
+    );
+}
+
+/**
+ * Cached version of skillSearch
+ */
+async function skillSearchCached(skillId, language = null) {
+    return apiCache.getOrFetch('ITEM_SEARCH', { skillId, language, type: 'skill' }, 
+        () => skillSearch(skillId, language)
+    );
+}
+
 module.exports = {
+    // Original functions (for backwards compatibility and when cache not needed)
     makeItemIdRequest,
     makeSearchQuery,
     makeMonsterSearchQuery,
     makeMapSearchQuery,
     monsterSearch,
     mapSearch,
-    skillSearch
+    skillSearch,
+    
+    // Cached versions (recommended for most use cases)
+    cached: {
+        makeItemIdRequest: makeItemIdRequestCached,
+        makeSearchQuery: makeSearchQueryCached,
+        monsterSearch: monsterSearchCached,
+        makeMonsterSearchQuery: makeMonsterSearchQueryCached,
+        mapSearch: mapSearchCached,
+        makeMapSearchQuery: makeMapSearchQueryCached,
+        skillSearch: skillSearchCached
+    }
 };

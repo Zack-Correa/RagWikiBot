@@ -9,6 +9,15 @@ const path = require('path');
 const logger = require('../utils/logger');
 const config = require('../config');
 
+// Lazy load plugin service to avoid circular dependencies
+let pluginService = null;
+function getPluginService() {
+    if (!pluginService) {
+        pluginService = require('./pluginService');
+    }
+    return pluginService;
+}
+
 const DEPLOY_STATE_FILE = path.join(__dirname, '..', 'data', 'deploy-state.json');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 
@@ -87,6 +96,7 @@ function getAvailableCommands() {
     const commandsPath = path.join(__dirname, '..', 'commands');
     
     try {
+        // Load core commands
         const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
         
         for (const file of commandFiles) {
@@ -99,9 +109,31 @@ function getAvailableCommands() {
                 commands.push({
                     name: command.data.name,
                     description: command.data.description,
-                    file: file
+                    file: file,
+                    source: 'core'
                 });
             }
+        }
+        
+        // Load plugin commands
+        try {
+            const pluginSvc = getPluginService();
+            const pluginCommands = pluginSvc.getAllPluginCommands();
+            
+            for (const [name, cmd] of pluginCommands) {
+                if (cmd.data) {
+                    commands.push({
+                        name: cmd.data.name,
+                        description: cmd.data.description,
+                        file: `plugin:${cmd.pluginName}`,
+                        source: 'plugin',
+                        pluginName: cmd.pluginName
+                    });
+                }
+            }
+        } catch (e) {
+            // Plugin service might not be initialized yet
+            logger.debug('Could not load plugin commands', { error: e.message });
         }
         
         commandsCache = commands;
@@ -122,6 +154,7 @@ function getCommandsData(commandNames = null) {
     const commands = [];
     
     try {
+        // Load core commands
         const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
         
         for (const file of commandFiles) {
@@ -135,6 +168,21 @@ function getCommandsData(commandNames = null) {
                     commands.push(command.data.toJSON());
                 }
             }
+        }
+        
+        // Load plugin commands
+        try {
+            const pluginSvc = getPluginService();
+            const pluginCommands = pluginSvc.getAllPluginCommands();
+            
+            for (const [name, cmd] of pluginCommands) {
+                if (cmd.data && (!commandNames || commandNames.includes(cmd.data.name))) {
+                    commands.push(cmd.data.toJSON());
+                }
+            }
+        } catch (e) {
+            // Plugin service might not be initialized yet
+            logger.debug('Could not load plugin commands for deploy', { error: e.message });
         }
     } catch (error) {
         logger.error('Error getting commands data', { error: error.message });
@@ -384,6 +432,14 @@ async function fetchRegisteredCommands(guildId = null) {
     }
 }
 
+/**
+ * Clears the commands cache (useful when plugins change)
+ */
+function clearCommandsCache() {
+    commandsCache = null;
+    logger.debug('Commands cache cleared');
+}
+
 module.exports = {
     setClient,
     getAvailableCommands,
@@ -394,5 +450,6 @@ module.exports = {
     clearGuild,
     getDeployStatus,
     fetchRegisteredCommands,
-    loadDeployState
+    loadDeployState,
+    clearCommandsCache
 };

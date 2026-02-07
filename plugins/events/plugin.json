@@ -1,0 +1,9 @@
+{
+    "name": "events",
+    "version": "1.0.0",
+    "description": "Exibe noticias e eventos do GNJoy LATAM com scraping automatico",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": ["eventos"],
+    "dependencies": []
+}

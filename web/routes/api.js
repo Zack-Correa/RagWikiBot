@@ -4,16 +4,42 @@
  */
 
 const express = require('express');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const alertStorage = require('../../utils/alertStorage');
 const configStorage = require('../../utils/configStorage');
+const partyStorage = require('../../utils/partyStorage');
 const marketAlertService = require('../../services/marketAlertService');
 const deployService = require('../../services/deployService');
+const gnjoyEvents = require('../../integrations/database/gnjoy-events');
 const logger = require('../../utils/logger');
+const auditLogger = require('../../utils/auditLogger');
 const { requireAuth } = require('../middleware/auth');
 
 // Cache for user info to avoid repeated Discord API calls
 const userCache = new Map();
 const USER_CACHE_TTL = 300000; // 5 minutes
+
+/**
+ * Formats uptime in human-readable format
+ * @param {number} seconds - Uptime in seconds
+ * @returns {string} Formatted uptime
+ */
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    parts.push(`${secs}s`);
+    
+    return parts.join(' ');
+}
 
 /**
  * Gets user info from Discord, with caching
@@ -60,7 +86,98 @@ async function getUserInfo(getClient, userId) {
 module.exports = function createApiRoutes(getDiscordClient) {
     const router = express.Router();
     
-    // Apply authentication to all API routes
+    // ==================== PUBLIC ENDPOINTS (NO AUTH) ====================
+    
+    /**
+     * GET /api/health
+     * Health check endpoint - no authentication required
+     * Returns bot status, uptime, and plugin information
+     */
+    router.get('/health', (req, res) => {
+        try {
+            const pluginService = require('../../services/pluginService');
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            const apiCache = require('../../utils/apiCache');
+            const client = getDiscordClient();
+            
+            const uptime = process.uptime();
+            const memUsage = process.memoryUsage();
+            
+            // Get plugin status
+            const plugins = pluginService.getLoadedPlugins();
+            const pluginStatus = {};
+            for (const plugin of plugins) {
+                pluginStatus[plugin.name] = {
+                    enabled: plugin.enabled,
+                    version: plugin.version,
+                    commands: plugin.commands?.length || 0
+                };
+            }
+            
+            // Get Discord status
+            const discordStatus = client ? {
+                connected: client.isReady(),
+                guilds: client.guilds?.cache?.size || 0,
+                ping: client.ws?.ping || null
+            } : { connected: false };
+            
+            // Get external APIs health
+            const externalApis = apiHealthCheck.getHealthSummary();
+            
+            // Get cache stats
+            const cacheStats = apiCache.getStats();
+            
+            res.json({
+                status: externalApis.allHealthy ? 'healthy' : 'degraded',
+                timestamp: new Date().toISOString(),
+                uptime: {
+                    seconds: Math.floor(uptime),
+                    formatted: formatUptime(uptime)
+                },
+                memory: {
+                    heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+                    heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+                    rss: Math.round(memUsage.rss / 1024 / 1024)
+                },
+                discord: discordStatus,
+                plugins: pluginStatus,
+                externalApis: externalApis,
+                cache: cacheStats,
+                version: require('../../package.json').version || '1.0.0'
+            });
+        } catch (error) {
+            res.status(500).json({
+                status: 'unhealthy',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            });
+        }
+    });
+    
+    /**
+     * GET /api/health/apis
+     * Returns detailed health status of external APIs
+     */
+    router.get('/health/apis', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            const apiCache = require('../../utils/apiCache');
+            
+            res.json({
+                success: true,
+                data: {
+                    apis: apiHealthCheck.getHealthSummary(),
+                    cache: apiCache.getStats()
+                }
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+    
+    // ==================== AUTHENTICATED ENDPOINTS ====================
+    
+    // Apply authentication to all subsequent API routes
     router.use(requireAuth);
 
     /**
@@ -133,6 +250,73 @@ module.exports = function createApiRoutes(getDiscordClient) {
     });
 
     /**
+     * POST /api/alerts
+     * Creates a new alert (admin only)
+     */
+    router.post('/alerts', (req, res) => {
+        try {
+            const { userId, searchTerm, server, storeType, maxPrice, minQuantity } = req.body;
+            
+            // Validate required fields
+            if (!userId || !searchTerm || !server || !storeType) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Campos obrigatórios: userId, searchTerm, server, storeType' 
+                });
+            }
+            
+            // Validate server
+            const validServers = ['FREYA', 'NIDHOGG', 'YGGDRASIL'];
+            if (!validServers.includes(server)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Servidor inválido. Use: FREYA, NIDHOGG ou YGGDRASIL' 
+                });
+            }
+            
+            // Validate storeType
+            if (!['BUY', 'SELL'].includes(storeType)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo inválido. Use: BUY ou SELL' 
+                });
+            }
+            
+            // Create the alert
+            const alert = alertStorage.addAlert({
+                userId,
+                searchTerm,
+                storeType,
+                server,
+                maxPrice: maxPrice ? parseInt(maxPrice, 10) : null,
+                minQuantity: minQuantity ? parseInt(minQuantity, 10) : null
+            });
+            
+            logger.info('Alert created by admin', { 
+                alertId: alert.id, 
+                userId, 
+                searchTerm 
+            });
+            
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.ALERT_CREATE,
+                req,
+                target: auditLogger.createTarget('alert', alert.id, searchTerm),
+                details: { userId, searchTerm, server, storeType, maxPrice, minQuantity }
+            });
+            
+            res.json({ 
+                success: true, 
+                message: 'Alerta criado com sucesso',
+                data: alert
+            });
+        } catch (error) {
+            logger.error('Error creating alert', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
      * DELETE /api/alerts/:id
      * Removes an alert by ID (admin can remove any alert)
      */
@@ -148,12 +332,94 @@ module.exports = function createApiRoutes(getDiscordClient) {
             if (data.alerts.length < initialLength) {
                 alertStorage.saveAlerts(data);
                 logger.info('Alert removed by admin', { alertId: id });
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.ALERT_DELETE,
+                    req,
+                    target: auditLogger.createTarget('alert', id)
+                });
                 res.json({ success: true, message: 'Alerta removido com sucesso' });
             } else {
                 res.status(404).json({ success: false, error: 'Alerta não encontrado' });
             }
         } catch (error) {
             logger.error('Error removing alert', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/alerts/:id
+     * Updates an alert by ID (admin only)
+     */
+    router.put('/alerts/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const { searchTerm, server, storeType, maxPrice, minQuantity } = req.body;
+            
+            // Validate at least one field to update
+            if (!searchTerm && !server && !storeType && maxPrice === undefined && minQuantity === undefined) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Nenhum campo para atualizar fornecido' 
+                });
+            }
+            
+            // Validate fields if provided
+            if (server && !['FREYA', 'NIDHOGG', 'YGGDRASIL'].includes(server)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Servidor inválido' 
+                });
+            }
+            
+            if (storeType && !['BUY', 'SELL'].includes(storeType)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo de transação inválido' 
+                });
+            }
+            
+            const updates = {};
+            if (searchTerm) updates.searchTerm = searchTerm.trim();
+            if (server) updates.server = server;
+            if (storeType) updates.storeType = storeType;
+            if (maxPrice !== undefined) updates.maxPrice = maxPrice ? parseInt(maxPrice, 10) : null;
+            if (minQuantity !== undefined) updates.minQuantity = minQuantity ? parseInt(minQuantity, 10) : null;
+            
+            const updatedAlert = alertStorage.updateAlert(id, updates);
+            
+            if (updatedAlert) {
+                logger.info('Alert updated by admin', { alertId: id, updates: Object.keys(updates) });
+                res.json({ 
+                    success: true, 
+                    message: 'Alerta atualizado com sucesso',
+                    data: updatedAlert
+                });
+            } else {
+                res.status(404).json({ success: false, error: 'Alerta não encontrado' });
+            }
+        } catch (error) {
+            logger.error('Error updating alert', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/alerts/:id
+     * Gets a single alert by ID
+     */
+    router.get('/alerts/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const alert = alertStorage.getAlert(id);
+            
+            if (alert) {
+                res.json({ success: true, data: alert });
+            } else {
+                res.status(404).json({ success: false, error: 'Alerta não encontrado' });
+            }
+        } catch (error) {
+            logger.error('Error getting alert', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -235,6 +501,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
         try {
             marketAlertService.stop();
             logger.info('Alert service stopped by admin');
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.SERVICE_STOP,
+                req,
+                target: auditLogger.createTarget('service', 'marketAlertService')
+            });
             res.json({ success: true, message: 'Serviço parado' });
         } catch (error) {
             logger.error('Error stopping service', { error: error.message });
@@ -250,6 +521,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
         try {
             marketAlertService.start();
             logger.info('Alert service started by admin');
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.SERVICE_START,
+                req,
+                target: auditLogger.createTarget('service', 'marketAlertService')
+            });
             res.json({ success: true, message: 'Serviço iniciado' });
         } catch (error) {
             logger.error('Error starting service', { error: error.message });
@@ -292,6 +568,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             }
             
             logger.info('Config updated by admin', { updates });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.CONFIG_UPDATE,
+                req,
+                target: auditLogger.createTarget('config', 'system'),
+                details: { updates }
+            });
             res.json({
                 success: true,
                 data: config,
@@ -300,6 +582,340 @@ module.exports = function createApiRoutes(getDiscordClient) {
         } catch (error) {
             logger.error('Error updating config', { error: error.message });
             res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== ENV EDITOR ENDPOINTS ====================
+
+    /**
+     * ENV variable definitions with metadata for safe editing
+     * sensitive: true means the value will be masked in API responses
+     */
+    const ENV_SCHEMA = [
+        { 
+            group: 'Discord Bot', 
+            icon: '🤖',
+            vars: [
+                { key: 'DISCORD_TOKEN', label: 'Token do Bot', sensitive: true, required: true, help: 'Token do bot Discord (Bot > Token no Developer Portal)' },
+                { key: 'CLIENT_ID', label: 'Client ID', sensitive: false, required: true, help: 'ID do aplicativo Discord' },
+                { key: 'BOT_USER_ID', label: 'Bot User ID', sensitive: false, required: false, help: 'ID de usuário do bot' },
+                { key: 'GUILD_ID', label: 'Guild ID', sensitive: false, required: true, help: 'ID do servidor Discord principal' },
+            ]
+        },
+        {
+            group: 'Painel Admin',
+            icon: '🔧',
+            vars: [
+                { key: 'ADMIN_PASSWORD', label: 'Senha do Admin', sensitive: true, required: true, help: 'Senha de acesso ao painel web' },
+                { key: 'ADMIN_PORT', label: 'Porta', sensitive: false, required: false, help: 'Porta do servidor web (padrão: 3000)' },
+                { key: 'ADMIN_HOST', label: 'Host', sensitive: false, required: false, help: 'Endereço de escuta (padrão: 0.0.0.0)' },
+                { key: 'SESSION_SECRET', label: 'Session Secret', sensitive: true, required: false, help: 'Chave secreta para sessões web' },
+            ]
+        },
+        {
+            group: 'APIs Externas',
+            icon: '🔑',
+            vars: [
+                { key: 'DIVINE_PRIDE_API_KEY', label: 'Divine Pride API Key', sensitive: true, required: false, help: 'Chave da API Divine Pride' },
+                { key: 'LOG_LEVEL', label: 'Nível de Log', sensitive: false, required: false, help: 'DEBUG, INFO, WARN ou ERROR' },
+            ]
+        },
+        {
+            group: 'Salesforce / Agentforce',
+            icon: '☁️',
+            vars: [
+                { key: 'SALESFORCE_CLIENT_ID', label: 'Client ID', sensitive: true, required: false, help: 'Client ID do Salesforce Connected App' },
+                { key: 'SALESFORCE_CLIENT_SECRET', label: 'Client Secret', sensitive: true, required: false, help: 'Client Secret do Salesforce Connected App' },
+                { key: 'SALESFORCE_INSTANCE_URL', label: 'Instance URL', sensitive: false, required: false, help: 'URL da instância Salesforce' },
+                { key: 'AGENTFORCE_AGENT_ID', label: 'Agent ID', sensitive: false, required: false, help: 'ID do agente Agentforce' },
+                { key: 'AGENTFORCE_API_KEY', label: 'API Key', sensitive: true, required: false, help: 'Chave de API do Agentforce' },
+            ]
+        },
+        {
+            group: 'SSL / Certificados',
+            icon: '🔒',
+            vars: [
+                { key: 'SSL_CERT_PATH', label: 'Caminho do Certificado', sensitive: false, required: false, help: 'Caminho do arquivo .pem do certificado' },
+                { key: 'SSL_KEY_PATH', label: 'Caminho da Chave', sensitive: false, required: false, help: 'Caminho do arquivo .pem da chave privada' },
+            ]
+        },
+        {
+            group: 'Criptografia',
+            icon: '🛡️',
+            vars: [
+                { key: 'ENCRYPTION_KEY', label: 'Chave de Criptografia', sensitive: true, required: false, help: 'Chave AES-256 para contas compartilhadas (64 caracteres hex)' },
+            ]
+        }
+    ];
+
+    /**
+     * Masks a sensitive value, showing only the last 4 characters
+     */
+    function maskValue(value) {
+        if (!value || value.length <= 4) return '••••';
+        return '•'.repeat(Math.min(value.length - 4, 30)) + value.slice(-4);
+    }
+
+    /**
+     * Parses .env file into key-value pairs (preserving comments and order)
+     */
+    function parseEnvFile(content) {
+        const entries = [];
+        const lines = content.split('\n');
+        
+        for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // Comments and empty lines
+            if (!trimmed || trimmed.startsWith('#')) {
+                entries.push({ type: 'comment', raw: line });
+                continue;
+            }
+            
+            // Key=value pairs
+            const eqIndex = trimmed.indexOf('=');
+            if (eqIndex > 0) {
+                const key = trimmed.substring(0, eqIndex).trim();
+                const value = trimmed.substring(eqIndex + 1).trim();
+                entries.push({ type: 'var', key, value, raw: line });
+            } else {
+                entries.push({ type: 'comment', raw: line });
+            }
+        }
+        
+        return entries;
+    }
+
+    /**
+     * GET /api/env
+     * Returns .env variables organized by group with sensitive values masked
+     */
+    router.get('/env', (req, res) => {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(__dirname, '../../.env');
+            
+            if (!fs.existsSync(envPath)) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Arquivo .env não encontrado' 
+                });
+            }
+            
+            const content = fs.readFileSync(envPath, 'utf8');
+            const entries = parseEnvFile(content);
+            
+            // Build a map of current values
+            const envMap = {};
+            for (const entry of entries) {
+                if (entry.type === 'var') {
+                    envMap[entry.key] = entry.value;
+                }
+            }
+            
+            // Build response with schema and masked values
+            const groups = ENV_SCHEMA.map(group => ({
+                group: group.group,
+                icon: group.icon,
+                vars: group.vars.map(varDef => ({
+                    key: varDef.key,
+                    label: varDef.label,
+                    sensitive: varDef.sensitive,
+                    required: varDef.required,
+                    help: varDef.help,
+                    value: varDef.sensitive ? maskValue(envMap[varDef.key] || '') : (envMap[varDef.key] || ''),
+                    hasValue: !!(envMap[varDef.key] && envMap[varDef.key].length > 0)
+                }))
+            }));
+            
+            // Find any extra vars not in the schema
+            const knownKeys = new Set(ENV_SCHEMA.flatMap(g => g.vars.map(v => v.key)));
+            const extraVars = entries
+                .filter(e => e.type === 'var' && !knownKeys.has(e.key))
+                .map(e => ({
+                    key: e.key,
+                    label: e.key,
+                    sensitive: false,
+                    required: false,
+                    help: 'Variável adicional',
+                    value: e.value,
+                    hasValue: !!(e.value && e.value.length > 0)
+                }));
+            
+            if (extraVars.length > 0) {
+                groups.push({
+                    group: 'Outras',
+                    icon: '📦',
+                    vars: extraVars
+                });
+            }
+            
+            res.json({
+                success: true,
+                data: { groups }
+            });
+        } catch (error) {
+            logger.error('Error reading env', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/env/reveal/:key
+     * Returns the real (unmasked) value of a sensitive variable
+     */
+    router.get('/env/reveal/:key', (req, res) => {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(__dirname, '../../.env');
+            
+            const { key } = req.params;
+            
+            if (!fs.existsSync(envPath)) {
+                return res.status(404).json({ success: false, error: 'Arquivo .env não encontrado' });
+            }
+            
+            const content = fs.readFileSync(envPath, 'utf8');
+            const entries = parseEnvFile(content);
+            
+            const entry = entries.find(e => e.type === 'var' && e.key === key);
+            
+            if (!entry) {
+                return res.status(404).json({ success: false, error: 'Variável não encontrada' });
+            }
+            
+            logger.info('ENV variable revealed by admin', { key });
+            
+            res.json({
+                success: true,
+                data: { key, value: entry.value }
+            });
+        } catch (error) {
+            logger.error('Error revealing env variable', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/env
+     * Updates .env variables
+     * Body: { variables: { KEY: "value", ... } }
+     * Empty string = remove variable, undefined/null = keep current
+     */
+    router.put('/env', (req, res) => {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(__dirname, '../../.env');
+            
+            const { variables } = req.body;
+            
+            if (!variables || typeof variables !== 'object') {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Body deve conter { variables: { KEY: "value" } }' 
+                });
+            }
+            
+            // Read current file
+            const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+            const entries = parseEnvFile(content);
+            
+            // Build a map of current values for reference
+            const currentMap = {};
+            for (const entry of entries) {
+                if (entry.type === 'var') {
+                    currentMap[entry.key] = entry.value;
+                }
+            }
+            
+            // Track which keys we've updated
+            const updatedKeys = new Set();
+            const changes = [];
+            
+            // Update existing entries
+            for (const entry of entries) {
+                if (entry.type === 'var' && variables[entry.key] !== undefined) {
+                    const newValue = variables[entry.key];
+                    
+                    // Skip if value hasn't changed
+                    if (newValue === entry.value) {
+                        updatedKeys.add(entry.key);
+                        continue;
+                    }
+                    
+                    // Check if the value is a masked placeholder (starts with •)
+                    if (typeof newValue === 'string' && newValue.includes('•')) {
+                        updatedKeys.add(entry.key);
+                        continue; // Keep the current value
+                    }
+                    
+                    const oldValue = entry.value;
+                    entry.value = newValue;
+                    entry.raw = `${entry.key}=${newValue}`;
+                    updatedKeys.add(entry.key);
+                    
+                    // Find if this is a sensitive variable
+                    const isSensitive = ENV_SCHEMA.some(g => 
+                        g.vars.some(v => v.key === entry.key && v.sensitive)
+                    );
+                    
+                    changes.push({
+                        key: entry.key,
+                        from: isSensitive ? maskValue(oldValue) : oldValue,
+                        to: isSensitive ? maskValue(newValue) : newValue
+                    });
+                }
+            }
+            
+            // Add new variables that don't exist yet
+            for (const [key, value] of Object.entries(variables)) {
+                if (!updatedKeys.has(key) && value && !value.includes('•')) {
+                    entries.push({ type: 'var', key, value, raw: `${key}=${value}` });
+                    changes.push({ key, from: null, to: '(new)' });
+                }
+            }
+            
+            // Rebuild the file
+            const newContent = entries.map(e => e.raw).join('\n');
+            
+            // Backup current .env
+            const backupPath = envPath + '.backup';
+            if (fs.existsSync(envPath)) {
+                fs.copyFileSync(envPath, backupPath);
+            }
+            
+            // Write new .env
+            fs.writeFileSync(envPath, newContent, 'utf8');
+            
+            logger.info('ENV file updated by admin', { 
+                changedKeys: changes.map(c => c.key),
+                changeCount: changes.length
+            });
+            
+            if (auditLogger) {
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.CONFIG_UPDATE,
+                    req,
+                    target: auditLogger.createTarget('env', '.env'),
+                    details: { changes: changes.map(c => c.key) }
+                });
+            }
+            
+            res.json({
+                success: true,
+                data: { 
+                    changes,
+                    message: changes.length > 0 
+                        ? `${changes.length} variável(is) atualizada(s). Reinicie o bot para aplicar as mudanças.`
+                        : 'Nenhuma alteração detectada.'
+                }
+            });
+        } catch (error) {
+            logger.error('Error updating env', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
         }
     });
 
@@ -384,6 +1000,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             const permission = configStorage.addPermission(type, value);
             
             logger.info('Permission added by admin', { type, value });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.PERMISSION_ADD,
+                req,
+                target: auditLogger.createTarget('permission', permission.id, value),
+                details: { type, value }
+            });
             res.json({ 
                 success: true, 
                 data: permission,
@@ -446,6 +1068,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
                     permissionId: id, 
                     alertsCleared: result.alertsCleared,
                     resolvedUserId
+                });
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.PERMISSION_REMOVE,
+                    req,
+                    target: auditLogger.createTarget('permission', id),
+                    details: { alertsCleared: result.alertsCleared, resolvedUserId }
                 });
                 
                 let message = 'Permissão removida com sucesso';
@@ -567,6 +1195,12 @@ module.exports = function createApiRoutes(getDiscordClient) {
             const result = await deployService.deployGlobal(commands || null);
             
             logger.info('Global deploy triggered by admin', { commands: result.commands });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.DEPLOY_GLOBAL,
+                req,
+                target: auditLogger.createTarget('deploy', 'global'),
+                details: { commands: result.commands, count: result.count }
+            });
             res.json({
                 success: true,
                 data: result,
@@ -610,6 +1244,11 @@ module.exports = function createApiRoutes(getDiscordClient) {
             await deployService.clearGlobal();
             
             logger.info('Global commands cleared by admin');
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.DEPLOY_CLEAR_GLOBAL,
+                req,
+                target: auditLogger.createTarget('deploy', 'global')
+            });
             res.json({
                 success: true,
                 message: 'Comandos globais removidos'
@@ -640,6 +1279,955 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    // ==================== EVENTS ENDPOINTS ====================
+
+    /**
+     * GET /api/events
+     * Returns all events
+     * Query params: source, activeOnly
+     */
+    router.get('/events', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { source, activeOnly } = req.query;
+            
+            const events = eventsStorage.getEvents({
+                source: source || null,
+                activeOnly: activeOnly === 'true'
+            });
+            
+            res.json({
+                success: true,
+                data: { events, total: events.length }
+            });
+        } catch (error) {
+            logger.error('Error getting events', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/events
+     * Creates a new manual event
+     */
+    router.post('/events', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { title, description, startDate, endDate, recurring, notifyMinutesBefore } = req.body;
+            
+            if (!title || !startDate || !endDate) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Título, data de início e data de fim são obrigatórios' 
+                });
+            }
+            
+            const event = eventsStorage.addEvent({
+                title,
+                description,
+                source: eventsStorage.EVENT_SOURCES.MANUAL,
+                startDate,
+                endDate,
+                recurring,
+                notifyMinutesBefore: notifyMinutesBefore || [60, 15],
+                createdBy: 'admin'
+            });
+            
+            logger.info('Event created by admin', { eventId: event.id, title });
+            res.json({
+                success: true,
+                data: event,
+                message: 'Evento criado com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error creating event', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/events/:id
+     * Updates an event
+     */
+    router.put('/events/:id', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { id } = req.params;
+            const updates = req.body;
+            
+            const event = eventsStorage.updateEvent(id, updates);
+            
+            if (!event) {
+                return res.status(404).json({ success: false, error: 'Evento não encontrado' });
+            }
+            
+            logger.info('Event updated by admin', { eventId: id });
+            res.json({
+                success: true,
+                data: event,
+                message: 'Evento atualizado'
+            });
+        } catch (error) {
+            logger.error('Error updating event', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/events/:id
+     * Removes an event
+     */
+    router.delete('/events/:id', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const { id } = req.params;
+            
+            const removed = eventsStorage.removeEvent(id);
+            
+            if (!removed) {
+                return res.status(404).json({ success: false, error: 'Evento não encontrado' });
+            }
+            
+            logger.info('Event removed by admin', { eventId: id });
+            res.json({
+                success: true,
+                message: 'Evento removido'
+            });
+        } catch (error) {
+            logger.error('Error removing event', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/events/stats
+     * Returns events statistics
+     */
+    router.get('/events/stats', (req, res) => {
+        try {
+            const eventsStorage = require('../../utils/eventsStorage');
+            const stats = eventsStorage.getStats();
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting events stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/events/scrape
+     * Forces a GNJoy scrape
+     */
+    router.post('/events/scrape', async (req, res) => {
+        try {
+            const eventNotificationService = require('../../services/eventNotificationService');
+            const result = await eventNotificationService.forceScrape();
+            
+            logger.info('Event scrape triggered by admin', { result });
+            res.json({
+                success: true,
+                data: result,
+                message: `Scraping concluído: ${result.added} novo(s), ${result.scraped} encontrado(s)`
+            });
+        } catch (error) {
+            logger.error('Error scraping events', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== SERVER STATUS ENDPOINTS ====================
+
+    /**
+     * GET /api/server-status
+     * Returns server status for all servers
+     */
+    router.get('/server-status', (req, res) => {
+        try {
+            const serverStatusService = require('../../services/serverStatusService');
+            const status = serverStatusService.getStatus();
+            res.json({
+                success: true,
+                data: status
+            });
+        } catch (error) {
+            logger.error('Error getting server status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/server-status/check
+     * Forces a status check
+     */
+    router.post('/server-status/check', async (req, res) => {
+        try {
+            const serverStatusService = require('../../services/serverStatusService');
+            const results = await serverStatusService.forceCheck();
+            res.json({
+                success: true,
+                data: results,
+                message: 'Verificação concluída'
+            });
+        } catch (error) {
+            logger.error('Error checking server status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/server-status/history
+     * Returns status change history
+     */
+    router.get('/server-status/history', (req, res) => {
+        try {
+            const serverStatusStorage = require('../../utils/serverStatusStorage');
+            const { limit } = req.query;
+            const history = serverStatusStorage.getHistory(parseInt(limit, 10) || 20);
+            res.json({
+                success: true,
+                data: { history, total: history.length }
+            });
+        } catch (error) {
+            logger.error('Error getting status history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PRICING ANALYSIS ENDPOINTS ====================
+
+    /**
+     * GET /api/pricing/analyze/:itemId
+     * Analyzes price for an item
+     * Query params: price, server, storeType, days
+     */
+    router.get('/pricing/analyze/:itemId', (req, res) => {
+        try {
+            const pricingService = require('../../services/pricingService');
+            const { itemId } = req.params;
+            const { price, server, storeType, days } = req.query;
+            
+            let analysis;
+            if (price) {
+                analysis = pricingService.analyzePrice(
+                    itemId,
+                    parseInt(price, 10),
+                    server || 'FREYA',
+                    storeType || 'SELL',
+                    parseInt(days, 10) || 30
+                );
+            } else {
+                analysis = pricingService.analyzeItem(
+                    itemId,
+                    server || null,
+                    storeType || null,
+                    parseInt(days, 10) || 30
+                );
+            }
+            
+            if (!analysis) {
+                return res.status(404).json({ success: false, error: 'Item not found or insufficient data' });
+            }
+            
+            res.json({
+                success: true,
+                data: analysis
+            });
+        } catch (error) {
+            logger.error('Error analyzing price', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/pricing/trending
+     * Gets items with significant price changes
+     * Query params: days, minChange
+     */
+    router.get('/pricing/trending', (req, res) => {
+        try {
+            const pricingService = require('../../services/pricingService');
+            const { days, minChange } = req.query;
+            
+            const trending = pricingService.getTrendingItems(
+                parseInt(days, 10) || 7,
+                parseInt(minChange, 10) || 10
+            );
+            
+            res.json({
+                success: true,
+                data: { items: trending, total: trending.length }
+            });
+        } catch (error) {
+            logger.error('Error getting trending items', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PRICE HISTORY ENDPOINTS ====================
+
+    /**
+     * GET /api/price-history/stats
+     * Returns price history statistics
+     */
+    router.get('/price-history/stats', (req, res) => {
+        try {
+            const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+            const stats = priceHistoryStorage.getStats();
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting price history stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/price-history/search
+     * Searches for items in price history
+     * Query params: term, limit
+     */
+    router.get('/price-history/search', (req, res) => {
+        try {
+            const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+            const { term, limit } = req.query;
+            
+            if (!term) {
+                return res.status(400).json({ success: false, error: 'Search term is required' });
+            }
+            
+            const items = priceHistoryStorage.searchItems(term, parseInt(limit, 10) || 20);
+            res.json({
+                success: true,
+                data: { items, total: items.length }
+            });
+        } catch (error) {
+            logger.error('Error searching price history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/price-history/item/:itemId
+     * Returns price history for a specific item
+     * Query params: server, storeType, days
+     */
+    router.get('/price-history/item/:itemId', (req, res) => {
+        try {
+            const priceHistoryStorage = require('../../utils/priceHistoryStorage');
+            const { itemId } = req.params;
+            const { server, storeType, days } = req.query;
+            
+            const history = priceHistoryStorage.getItemHistory(
+                itemId,
+                server || null,
+                storeType || null,
+                parseInt(days, 10) || 30
+            );
+            
+            if (!history) {
+                return res.status(404).json({ success: false, error: 'Item not found in price history' });
+            }
+            
+            res.json({
+                success: true,
+                data: history
+            });
+        } catch (error) {
+            logger.error('Error getting item price history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== METRICS ENDPOINTS ====================
+
+    /**
+     * GET /api/metrics/dashboard
+     * Returns dashboard statistics for metrics
+     */
+    router.get('/metrics/dashboard', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const stats = metricsService.getDashboardStats();
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting metrics dashboard', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/chart
+     * Returns chart data for metrics visualization
+     * Query params: days (default 7)
+     */
+    router.get('/metrics/chart', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const days = parseInt(req.query.days, 10) || 7;
+            const chartData = metricsService.getChartData(days);
+            res.json({
+                success: true,
+                data: chartData
+            });
+        } catch (error) {
+            logger.error('Error getting metrics chart', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/hourly
+     * Returns hourly distribution for today
+     */
+    router.get('/metrics/hourly', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const hourlyData = metricsService.getHourlyDistribution();
+            res.json({
+                success: true,
+                data: hourlyData
+            });
+        } catch (error) {
+            logger.error('Error getting hourly metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/command/:name
+     * Returns statistics for a specific command
+     * Query params: days (default 30)
+     */
+    router.get('/metrics/command/:name', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            const { name } = req.params;
+            const days = parseInt(req.query.days, 10) || 30;
+            const stats = metricsService.getCommandStats(name, days);
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting command metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/metrics/reset
+     * Resets all metrics (admin only, use with caution)
+     */
+    router.post('/metrics/reset', (req, res) => {
+        try {
+            const metricsService = require('../../services/metricsService');
+            metricsService.resetMetrics();
+            logger.info('Metrics reset by admin');
+            res.json({
+                success: true,
+                message: 'Métricas resetadas com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error resetting metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/guilds
+     * Returns metrics aggregated by guild
+     * Query params: limit (default 20), active (true/false)
+     */
+    router.get('/metrics/guilds', async (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const { limit, active } = req.query;
+            
+            const guilds = metricsStorage.getAllGuildStats();
+            const summary = metricsStorage.getGuildActivitySummary();
+            
+            // Filter by active status if requested
+            let filteredGuilds = guilds;
+            if (active === 'true') {
+                filteredGuilds = guilds.filter(g => g.daysSinceActive <= 7);
+            } else if (active === 'false') {
+                filteredGuilds = guilds.filter(g => g.daysSinceActive > 7);
+            }
+            
+            // Sort by total commands and limit
+            filteredGuilds = filteredGuilds
+                .sort((a, b) => b.totalCommands - a.totalCommands)
+                .slice(0, parseInt(limit, 10) || 20);
+            
+            // Try to enrich with Discord guild names
+            const client = getDiscordClient();
+            if (client) {
+                for (const guild of filteredGuilds) {
+                    try {
+                        const discordGuild = await client.guilds.fetch(guild.guildId);
+                        if (discordGuild) {
+                            guild.name = discordGuild.name;
+                            guild.icon = discordGuild.iconURL({ size: 64 });
+                            guild.memberCount = discordGuild.memberCount;
+                        }
+                    } catch (e) {
+                        // Guild not accessible, keep stored name
+                    }
+                }
+            }
+            
+            res.json({
+                success: true,
+                data: {
+                    guilds: filteredGuilds,
+                    summary,
+                    total: guilds.length
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting guild metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/guilds/:guildId
+     * Returns detailed metrics for a specific guild
+     */
+    router.get('/metrics/guilds/:guildId', async (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const { guildId } = req.params;
+            
+            const stats = metricsStorage.getGuildStats(guildId);
+            
+            if (!stats) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Guild não encontrada nas métricas' 
+                });
+            }
+            
+            // Try to enrich with Discord guild info
+            const client = getDiscordClient();
+            if (client) {
+                try {
+                    const discordGuild = await client.guilds.fetch(guildId);
+                    if (discordGuild) {
+                        stats.name = discordGuild.name;
+                        stats.icon = discordGuild.iconURL({ size: 128 });
+                        stats.memberCount = discordGuild.memberCount;
+                        stats.owner = discordGuild.ownerId;
+                    }
+                } catch (e) {
+                    // Guild not accessible
+                }
+            }
+            
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error getting guild metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/extended
+     * Returns extended metrics with more details
+     * Query params: days (default 30)
+     */
+    router.get('/metrics/extended', async (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const days = parseInt(req.query.days, 10) || 30;
+            const metrics = metricsStorage.loadMetrics();
+            
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const cutoffKey = cutoff.toISOString().split('T')[0];
+            
+            // Aggregate data by day
+            const dailyStats = [];
+            const commandStats = {};
+            const userActivity = {};
+            const hourlyHeatmap = {}; // day of week -> hour -> count
+            
+            for (const [date, data] of Object.entries(metrics.daily)) {
+                if (date >= cutoffKey) {
+                    const dayOfWeek = new Date(date).getDay();
+                    
+                    dailyStats.push({
+                        date,
+                        commands: data.totalCommands || 0,
+                        errors: data.totalErrors || 0,
+                        users: data.uniqueUsers?.length || 0,
+                        errorRate: data.totalCommands > 0 
+                            ? ((data.totalErrors / data.totalCommands) * 100).toFixed(1) 
+                            : 0
+                    });
+                    
+                    // Aggregate command stats
+                    for (const [cmd, cmdData] of Object.entries(data.commands || {})) {
+                        if (!commandStats[cmd]) {
+                            commandStats[cmd] = {
+                                name: cmd,
+                                count: 0,
+                                errors: 0,
+                                totalResponseMs: 0,
+                                executions: []
+                            };
+                        }
+                        commandStats[cmd].count += cmdData.count || 0;
+                        commandStats[cmd].errors += cmdData.errors || 0;
+                        commandStats[cmd].totalResponseMs += cmdData.totalResponseMs || 0;
+                        commandStats[cmd].executions.push({
+                            date,
+                            count: cmdData.count,
+                            avgResponseMs: cmdData.avgResponseMs
+                        });
+                    }
+                    
+                    // Track user activity
+                    for (const userId of (data.uniqueUsers || [])) {
+                        if (!userActivity[userId]) {
+                            userActivity[userId] = { days: 0, firstSeen: date, lastSeen: date };
+                        }
+                        userActivity[userId].days++;
+                        userActivity[userId].lastSeen = date;
+                    }
+                }
+            }
+            
+            // Build hourly heatmap from hourly data
+            for (const [hourKey, data] of Object.entries(metrics.hourly || {})) {
+                const [dateStr, hour] = hourKey.split('T');
+                if (dateStr >= cutoffKey) {
+                    const dayOfWeek = new Date(dateStr).getDay();
+                    if (!hourlyHeatmap[dayOfWeek]) {
+                        hourlyHeatmap[dayOfWeek] = {};
+                    }
+                    if (!hourlyHeatmap[dayOfWeek][hour]) {
+                        hourlyHeatmap[dayOfWeek][hour] = 0;
+                    }
+                    hourlyHeatmap[dayOfWeek][hour] += data.totalCommands || 0;
+                }
+            }
+            
+            // Calculate command stats
+            const commandRanking = Object.values(commandStats)
+                .map(cmd => ({
+                    ...cmd,
+                    avgResponseMs: cmd.count > 0 
+                        ? Math.round(cmd.totalResponseMs / cmd.count) 
+                        : 0,
+                    errorRate: cmd.count > 0 
+                        ? ((cmd.errors / cmd.count) * 100).toFixed(1) 
+                        : 0
+                }))
+                .sort((a, b) => b.count - a.count);
+            
+            // Calculate top users
+            const topUsers = Object.entries(userActivity)
+                .map(([userId, data]) => ({ userId, ...data }))
+                .sort((a, b) => b.days - a.days)
+                .slice(0, 10);
+            
+            // Enrich top users with Discord info
+            const enrichedTopUsers = await Promise.all(
+                topUsers.map(async user => {
+                    const info = await getUserInfo(getDiscordClient, user.userId);
+                    return { ...user, ...info };
+                })
+            );
+            
+            // Calculate averages
+            const totalDays = dailyStats.length;
+            const avgCommandsPerDay = totalDays > 0 
+                ? Math.round(dailyStats.reduce((sum, d) => sum + d.commands, 0) / totalDays) 
+                : 0;
+            const avgUsersPerDay = totalDays > 0 
+                ? Math.round(dailyStats.reduce((sum, d) => sum + d.users, 0) / totalDays) 
+                : 0;
+            const overallErrorRate = metrics.totals.commands > 0
+                ? ((metrics.totals.errors / metrics.totals.commands) * 100).toFixed(2)
+                : 0;
+            
+            res.json({
+                success: true,
+                data: {
+                    period: { days, from: cutoffKey, to: new Date().toISOString().split('T')[0] },
+                    summary: {
+                        totalCommands: metrics.totals.commands,
+                        totalErrors: metrics.totals.errors,
+                        totalUsers: metrics.totals.uniqueUsers?.length || 0,
+                        avgCommandsPerDay,
+                        avgUsersPerDay,
+                        overallErrorRate
+                    },
+                    daily: dailyStats.sort((a, b) => a.date.localeCompare(b.date)),
+                    commands: commandRanking,
+                    topUsers: enrichedTopUsers,
+                    heatmap: hourlyHeatmap
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting extended metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/errors
+     * Returns error statistics
+     * Query params: days (default 7)
+     */
+    router.get('/metrics/errors', (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const days = parseInt(req.query.days, 10) || 7;
+            const metrics = metricsStorage.loadMetrics();
+            
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const cutoffKey = cutoff.toISOString().split('T')[0];
+            
+            const labels = [];
+            const errors = [];
+            const errorsByCommand = {};
+            
+            for (const [date, data] of Object.entries(metrics.daily)) {
+                if (date >= cutoffKey) {
+                    labels.push(date.slice(5)); // MM-DD format
+                    errors.push(data.totalErrors || 0);
+                    
+                    for (const [cmd, cmdData] of Object.entries(data.commands || {})) {
+                        if (cmdData.errors > 0) {
+                            if (!errorsByCommand[cmd]) {
+                                errorsByCommand[cmd] = 0;
+                            }
+                            errorsByCommand[cmd] += cmdData.errors;
+                        }
+                    }
+                }
+            }
+            
+            const topErrorCommands = Object.entries(errorsByCommand)
+                .map(([name, count]) => ({ name, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 5);
+            
+            res.json({
+                success: true,
+                data: {
+                    labels,
+                    errors,
+                    topErrorCommands,
+                    totalErrors: metrics.totals.errors
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting error metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/metrics/response-times
+     * Returns response time statistics
+     * Query params: days (default 7)
+     */
+    router.get('/metrics/response-times', (req, res) => {
+        try {
+            const metricsStorage = require('../../utils/metricsStorage');
+            const days = parseInt(req.query.days, 10) || 7;
+            const metrics = metricsStorage.loadMetrics();
+            
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const cutoffKey = cutoff.toISOString().split('T')[0];
+            
+            const labels = [];
+            const avgTimes = [];
+            const byCommand = {};
+            
+            for (const [date, data] of Object.entries(metrics.daily)) {
+                if (date >= cutoffKey) {
+                    labels.push(date.slice(5));
+                    
+                    let totalMs = 0;
+                    let totalCount = 0;
+                    
+                    for (const [cmd, cmdData] of Object.entries(data.commands || {})) {
+                        if (cmdData.totalResponseMs && cmdData.count) {
+                            totalMs += cmdData.totalResponseMs;
+                            totalCount += cmdData.count;
+                            
+                            if (!byCommand[cmd]) {
+                                byCommand[cmd] = { totalMs: 0, count: 0 };
+                            }
+                            byCommand[cmd].totalMs += cmdData.totalResponseMs;
+                            byCommand[cmd].count += cmdData.count;
+                        }
+                    }
+                    
+                    avgTimes.push(totalCount > 0 ? Math.round(totalMs / totalCount) : 0);
+                }
+            }
+            
+            const commandAvgTimes = Object.entries(byCommand)
+                .map(([name, data]) => ({
+                    name,
+                    avgMs: data.count > 0 ? Math.round(data.totalMs / data.count) : 0,
+                    count: data.count
+                }))
+                .sort((a, b) => b.avgMs - a.avgMs)
+                .slice(0, 10);
+            
+            res.json({
+                success: true,
+                data: {
+                    labels,
+                    avgTimes,
+                    byCommand: commandAvgTimes
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting response time metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== CACHE AND API HEALTH ENDPOINTS ====================
+
+    /**
+     * GET /api/cache/stats
+     * Returns cache statistics
+     */
+    router.get('/cache/stats', (req, res) => {
+        try {
+            const apiCache = require('../../utils/apiCache');
+            res.json({
+                success: true,
+                data: apiCache.getStats()
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/cache/clear
+     * Clears the cache
+     * Query params: pattern (optional) - pattern to match for selective clearing
+     */
+    router.post('/cache/clear', (req, res) => {
+        try {
+            const apiCache = require('../../utils/apiCache');
+            const { pattern } = req.body;
+            
+            if (pattern) {
+                const removed = apiCache.invalidate(pattern);
+                logger.info('Cache invalidated by pattern', { pattern, removed });
+                res.json({
+                    success: true,
+                    message: `${removed} entradas removidas do cache`
+                });
+            } else {
+                apiCache.clear();
+                logger.info('Cache cleared by admin');
+                res.json({
+                    success: true,
+                    message: 'Cache limpo com sucesso'
+                });
+            }
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/cache/reset-stats
+     * Resets cache statistics
+     */
+    router.post('/cache/reset-stats', (req, res) => {
+        try {
+            const apiCache = require('../../utils/apiCache');
+            apiCache.resetStats();
+            logger.info('Cache stats reset by admin');
+            res.json({
+                success: true,
+                message: 'Estatísticas do cache resetadas'
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/apis/health
+     * Returns detailed health status of all external APIs
+     */
+    router.get('/apis/health', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            res.json({
+                success: true,
+                data: apiHealthCheck.getAllStatus()
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/apis/:name/reset
+     * Resets health status for a specific API
+     */
+    router.post('/apis/:name/reset', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            const { name } = req.params;
+            
+            apiHealthCheck.resetStatus(name);
+            logger.info('API health reset by admin', { api: name });
+            res.json({
+                success: true,
+                message: `Status da API ${name} resetado`
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/apis/reset-all
+     * Resets health status for all APIs
+     */
+    router.post('/apis/reset-all', (req, res) => {
+        try {
+            const apiHealthCheck = require('../../utils/apiHealthCheck');
+            apiHealthCheck.resetAllStats();
+            logger.info('All API health stats reset by admin');
+            res.json({
+                success: true,
+                message: 'Status de todas as APIs resetado'
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== LEGACY WHITELIST ENDPOINTS (backwards compatibility) ====================
 
     /**
@@ -661,6 +2249,1436 @@ module.exports = function createApiRoutes(getDiscordClient) {
             });
         } catch (error) {
             logger.error('Error getting whitelist', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // =====================
+    // News Routes
+    // =====================
+
+    /**
+     * GET /api/news
+     * Get news list and cache info
+     */
+    router.get('/news', async (req, res) => {
+        try {
+            const cacheInfo = gnjoyEvents.getNewsCacheInfo();
+            const news = await gnjoyEvents.getLatestNews();
+            const categories = gnjoyEvents.categorizeNews(news);
+            
+            res.json({
+                success: true,
+                data: {
+                    cache: cacheInfo,
+                    news: news,
+                    categories: {
+                        avisos: categories.avisos.length,
+                        atualizacoes: categories.atualizacoes.length,
+                        eventos: categories.eventos.length,
+                        outros: categories.outros.length
+                    },
+                    categorizedNews: categories
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting news', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/news/refresh
+     * Force refresh news cache
+     */
+    router.post('/news/refresh', async (req, res) => {
+        try {
+            logger.info('Admin forcing news refresh');
+            const result = await gnjoyEvents.forceRefreshNews();
+            
+            res.json({
+                success: result.success,
+                data: result
+            });
+        } catch (error) {
+            logger.error('Error refreshing news', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== PARTY/GROUP ROUTES ====================
+
+    /**
+     * GET /api/parties
+     * Returns all parties with optional filters
+     * Query params: status, guildId
+     */
+    router.get('/parties', async (req, res) => {
+        try {
+            const { status, guildId } = req.query;
+            const data = partyStorage.loadParties();
+            
+            let parties = data.parties || [];
+            
+            // Apply filters
+            if (status) {
+                parties = parties.filter(p => p.status === status);
+            }
+            if (guildId) {
+                parties = parties.filter(p => p.guildId === guildId);
+            }
+            
+            // Sort by scheduled date (newest first)
+            parties.sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+            
+            // Enrich with user info and class emojis
+            const enrichedParties = await Promise.all(parties.map(async party => {
+                const creatorInfo = await getUserInfo(getDiscordClient, party.creatorId);
+                
+                // Get guild info if available
+                let guildName = party.guildId;
+                const client = getDiscordClient();
+                if (client) {
+                    try {
+                        const guild = await client.guilds.fetch(party.guildId);
+                        guildName = guild.name;
+                    } catch (e) {
+                        // Ignore
+                    }
+                }
+                
+                // Add class emoji to each participant
+                const enrichedParticipants = party.participants.map(p => ({
+                    ...p,
+                    classEmoji: partyStorage.CLASSES[p.classType]?.emoji || '👤'
+                }));
+                
+                return {
+                    ...party,
+                    participants: enrichedParticipants,
+                    creator: creatorInfo,
+                    guildName
+                };
+            }));
+            
+            // Get stats
+            const stats = partyStorage.getStats();
+            
+            res.json({
+                success: true,
+                data: {
+                    parties: enrichedParties,
+                    stats
+                }
+            });
+        } catch (error) {
+            logger.error('Error loading parties', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/parties/stats
+     * Returns party statistics
+     */
+    router.get('/parties/stats', (req, res) => {
+        try {
+            const stats = partyStorage.getStats();
+            res.json({ success: true, data: stats });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/parties/:id
+     * Cancels/removes a party (admin only)
+     */
+    router.delete('/parties/:id', (req, res) => {
+        try {
+            const { id } = req.params;
+            const data = partyStorage.loadParties();
+            const partyIndex = data.parties.findIndex(p => p.id === id);
+            
+            if (partyIndex === -1) {
+                return res.status(404).json({ success: false, error: 'Grupo não encontrado' });
+            }
+            
+            const party = data.parties[partyIndex];
+            
+            // Mark as cancelled instead of deleting
+            party.status = 'cancelled';
+            partyStorage.saveParties(data);
+            
+            logger.info('Party cancelled by admin', { partyId: id });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.PARTY_CANCEL,
+                req,
+                target: auditLogger.createTarget('party', id, party.instanceName),
+                details: { instanceName: party.instanceName, participants: party.participants?.length }
+            });
+            
+            res.json({ 
+                success: true, 
+                message: 'Grupo cancelado com sucesso',
+                data: party
+            });
+        } catch (error) {
+            logger.error('Error cancelling party', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/parties/:id/cleanup
+     * Permanently removes a party from storage
+     */
+    router.post('/parties/:id/cleanup', (req, res) => {
+        try {
+            const { id } = req.params;
+            const data = partyStorage.loadParties();
+            const initialLength = data.parties.length;
+            
+            data.parties = data.parties.filter(p => p.id !== id);
+            
+            if (data.parties.length === initialLength) {
+                return res.status(404).json({ success: false, error: 'Grupo não encontrado' });
+            }
+            
+            partyStorage.saveParties(data);
+            logger.info('Party removed by admin', { partyId: id });
+            
+            res.json({ success: true, message: 'Grupo removido permanentemente' });
+        } catch (error) {
+            logger.error('Error removing party', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/parties/cleanup
+     * Cleans up old/cancelled parties
+     */
+    router.post('/parties/cleanup', (req, res) => {
+        try {
+            partyStorage.cleanupOldParties();
+            logger.info('Parties cleanup triggered by admin');
+            
+            res.json({ success: true, message: 'Limpeza executada' });
+        } catch (error) {
+            logger.error('Error cleaning up parties', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/parties/:partyId/participants/:userId
+     * Removes a participant from a party
+     */
+    router.delete('/parties/:partyId/participants/:userId', async (req, res) => {
+        try {
+            const { partyId, userId } = req.params;
+            
+            const result = partyStorage.leaveParty(partyId, userId);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            logger.info('Participant removed by admin', { partyId, userId });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.PARTY_REMOVE_PARTICIPANT,
+                req,
+                target: auditLogger.createTarget('party', partyId),
+                details: { userId }
+            });
+            
+            // Try to update the Discord message
+            try {
+                const partyService = require('../../services/partyService');
+                const party = partyStorage.getParty(partyId);
+                if (party && party.messageId) {
+                    await partyService.updatePartyMessage(party);
+                }
+            } catch (e) {
+                logger.warn('Could not update party message after removal', { error: e.message });
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Participante removido',
+                data: result.party
+            });
+        } catch (error) {
+            logger.error('Error removing participant', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/parties/:partyId/class-limits
+     * Updates class limits for a party
+     */
+    router.put('/parties/:partyId/class-limits', async (req, res) => {
+        try {
+            const { partyId } = req.params;
+            const { classLimits } = req.body;
+            
+            // Validate class limits
+            if (classLimits && typeof classLimits === 'object') {
+                for (const [classType, limit] of Object.entries(classLimits)) {
+                    if (!partyStorage.CLASSES[classType]) {
+                        return res.status(400).json({ 
+                            success: false, 
+                            error: `Classe inválida: ${classType}` 
+                        });
+                    }
+                    if (typeof limit !== 'number' || limit < 0) {
+                        return res.status(400).json({ 
+                            success: false, 
+                            error: `Limite inválido para ${classType}` 
+                        });
+                    }
+                }
+            }
+            
+            const result = partyStorage.updateClassLimits(partyId, classLimits || {});
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            logger.info('Party class limits updated by admin', { partyId });
+            
+            // Try to update the Discord message
+            try {
+                const partyService = require('../../services/partyService');
+                const party = partyStorage.getParty(partyId);
+                if (party && party.messageId) {
+                    await partyService.updatePartyMessage(party);
+                }
+            } catch (e) {
+                logger.warn('Could not update party message after class limits change', { error: e.message });
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Limites de classe atualizados',
+                data: result.party
+            });
+        } catch (error) {
+            logger.error('Error updating class limits', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/classes
+     * Returns available classes and templates
+     */
+    router.get('/classes', (req, res) => {
+        res.json({
+            success: true,
+            data: {
+                classes: partyStorage.CLASSES,
+                templates: partyStorage.INSTANCE_TEMPLATES
+            }
+        });
+    });
+
+    // ==================== PLUGIN ROUTES ====================
+    
+    // Lazy load plugin service
+    const pluginService = require('../../services/pluginService');
+    const pluginStorage = require('../../utils/pluginStorage');
+
+    /**
+     * GET /api/plugins
+     * Returns list of installed plugins
+     */
+    router.get('/plugins', (req, res) => {
+        try {
+            const installedPlugins = pluginStorage.getInstalledPluginsInfo();
+            const loadedPlugins = pluginService.getLoadedPlugins();
+            
+            // Merge information
+            const plugins = installedPlugins.map(installed => {
+                const loaded = loadedPlugins.find(l => l.name === installed.name);
+                return {
+                    ...installed,
+                    loaded: !!loaded,
+                    enabled: loaded?.enabled || false,
+                    loadedAt: loaded?.loadedAt || null,
+                    enabledAt: loaded?.enabledAt || null,
+                    hasEvents: loaded?.hasEvents || false
+                };
+            });
+            
+            res.json({
+                success: true,
+                data: plugins
+            });
+        } catch (error) {
+            logger.error('Error fetching plugins', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/plugins/:name
+     * Returns details of a specific plugin
+     */
+    router.get('/plugins/:name', (req, res) => {
+        try {
+            const { name } = req.params;
+            const info = pluginService.getPluginInfo(name);
+            
+            if (!info) {
+                return res.status(404).json({ success: false, error: 'Plugin não encontrado' });
+            }
+            
+            res.json({
+                success: true,
+                data: info
+            });
+        } catch (error) {
+            logger.error('Error fetching plugin info', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/:name/enable
+     * Enables a plugin
+     */
+    router.post('/plugins/:name/enable', (req, res) => {
+        try {
+            const { name } = req.params;
+            const result = pluginService.enablePlugin(name);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            // Clear commands cache to include new plugin commands
+            const deployService = require('../../services/deployService');
+            deployService.clearCommandsCache();
+            
+            res.json({
+                success: true,
+                message: `Plugin ${name} ativado com sucesso`
+            });
+        } catch (error) {
+            logger.error('Error enabling plugin', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/:name/disable
+     * Disables a plugin
+     */
+    router.post('/plugins/:name/disable', (req, res) => {
+        try {
+            const { name } = req.params;
+            const result = pluginService.disablePlugin(name);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            // Clear commands cache to remove plugin commands
+            const deployService = require('../../services/deployService');
+            deployService.clearCommandsCache();
+            
+            res.json({
+                success: true,
+                message: `Plugin ${name} desativado com sucesso`
+            });
+        } catch (error) {
+            logger.error('Error disabling plugin', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/:name/reload
+     * Reloads a plugin (hot-reload)
+     */
+    router.post('/plugins/:name/reload', (req, res) => {
+        try {
+            const { name } = req.params;
+            const result = pluginService.reloadPlugin(name);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            // Clear commands cache
+            const deployService = require('../../services/deployService');
+            deployService.clearCommandsCache();
+            
+            res.json({
+                success: true,
+                message: `Plugin ${name} recarregado com sucesso`
+            });
+        } catch (error) {
+            logger.error('Error reloading plugin', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/plugins/:name/config
+     * Updates a plugin's configuration
+     */
+    router.put('/plugins/:name/config', (req, res) => {
+        try {
+            const { name } = req.params;
+            const { config } = req.body;
+            
+            if (!config || typeof config !== 'object') {
+                return res.status(400).json({ success: false, error: 'Configuração inválida' });
+            }
+            
+            const result = pluginService.updatePluginConfig(name, config);
+            
+            if (!result.success) {
+                return res.status(400).json({ success: false, error: result.error });
+            }
+            
+            res.json({
+                success: true,
+                message: `Configuração do plugin ${name} atualizada`
+            });
+        } catch (error) {
+            logger.error('Error updating plugin config', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== AUDIT LOG ROUTES ====================
+
+    /**
+     * GET /api/audit
+     * Returns audit log entries with filters
+     * Query params: type, action, actorId, dateFrom, dateTo, limit, offset
+     */
+    router.get('/audit', (req, res) => {
+        try {
+            const { type, action, actorId, actorType, dateFrom, dateTo, success, limit, offset } = req.query;
+            
+            const filters = {};
+            if (type) filters.type = type;
+            if (action) filters.action = action;
+            if (actorId) filters.actorId = actorId;
+            if (actorType) filters.actorType = actorType;
+            if (dateFrom) filters.dateFrom = dateFrom;
+            if (dateTo) filters.dateTo = dateTo;
+            if (success !== undefined) filters.success = success === 'true';
+            if (limit) filters.limit = parseInt(limit, 10);
+            if (offset) filters.offset = parseInt(offset, 10);
+            
+            const result = auditLogger.queryEntries(filters);
+            
+            res.json({
+                success: true,
+                data: result.entries,
+                pagination: {
+                    total: result.total,
+                    limit: result.limit,
+                    offset: result.offset
+                }
+            });
+        } catch (error) {
+            logger.error('Error fetching audit log', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/audit/stats
+     * Returns audit log statistics
+     * Query params: days (default: 7)
+     */
+    router.get('/audit/stats', (req, res) => {
+        try {
+            const days = parseInt(req.query.days, 10) || 7;
+            const stats = auditLogger.getStats(days);
+            
+            res.json({
+                success: true,
+                data: stats
+            });
+        } catch (error) {
+            logger.error('Error fetching audit stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/audit/export
+     * Exports audit log entries
+     * Query params: format (json|csv), type, action, dateFrom, dateTo
+     */
+    router.get('/audit/export', (req, res) => {
+        try {
+            const { format, type, action, dateFrom, dateTo } = req.query;
+            
+            const filters = {};
+            if (type) filters.type = type;
+            if (action) filters.action = action;
+            if (dateFrom) filters.dateFrom = dateFrom;
+            if (dateTo) filters.dateTo = dateTo;
+            
+            const exportFormat = format === 'csv' ? 'csv' : 'json';
+            const data = auditLogger.exportEntries(filters, exportFormat);
+            
+            const filename = `audit-log-${new Date().toISOString().split('T')[0]}.${exportFormat}`;
+            const contentType = exportFormat === 'csv' ? 'text/csv' : 'application/json';
+            
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(data);
+        } catch (error) {
+            logger.error('Error exporting audit log', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/audit/cleanup
+     * Cleans up old audit entries
+     * Query params: days (default: 30)
+     */
+    router.delete('/audit/cleanup', (req, res) => {
+        try {
+            const days = parseInt(req.query.days, 10) || 30;
+            const result = auditLogger.cleanupOldEntries(days);
+            
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.AUDIT_CLEANUP,
+                req,
+                target: auditLogger.createTarget('audit', 'cleanup'),
+                details: { days, ...result }
+            });
+            
+            res.json({
+                success: true,
+                data: result,
+                message: `Limpeza concluída: ${result.entriesRemoved} entradas e ${result.filesRemoved} arquivos removidos`
+            });
+        } catch (error) {
+            logger.error('Error cleaning up audit log', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== BACKUP ROUTES ====================
+
+    /**
+     * GET /api/backups
+     * Returns list of available backups
+     */
+    router.get('/backups', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const status = backupService.getStatus();
+            
+            res.json({
+                success: true,
+                data: status
+            });
+        } catch (error) {
+            logger.error('Error getting backups', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/backups/create
+     * Creates a new backup manually
+     */
+    router.post('/backups/create', async (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const result = await backupService.forceBackup();
+            
+            logger.info('Manual backup created by admin', { filename: result.filename });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.BACKUP_CREATE,
+                req,
+                target: auditLogger.createTarget('backup', result.filename),
+                details: { size: result.sizeFormatted, files: result.filesIncluded?.length }
+            });
+            
+            res.json({
+                success: true,
+                data: result,
+                message: result.skipped 
+                    ? 'Backup já existe para hoje'
+                    : `Backup criado: ${result.filename}`
+            });
+        } catch (error) {
+            logger.error('Error creating backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/backups/:filename/restore
+     * Restores a backup
+     */
+    router.post('/backups/:filename/restore', async (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const { filename } = req.params;
+            
+            const result = await backupService.restoreBackup(filename);
+            
+            logger.info('Backup restored by admin', { filename, files: result.filesRestored?.length });
+            auditLogger.logAdminAction({
+                action: auditLogger.ACTIONS.BACKUP_RESTORE,
+                req,
+                target: auditLogger.createTarget('backup', filename),
+                details: { 
+                    filesRestored: result.filesRestored?.length,
+                    errors: result.errors?.length,
+                    preRestoreBackup: result.preRestoreBackup
+                }
+            });
+            
+            res.json({
+                success: result.success,
+                data: result,
+                message: result.success 
+                    ? `Backup restaurado: ${result.filesRestored.length} arquivos`
+                    : `Restauração parcial: ${result.errors.length} erros`
+            });
+        } catch (error) {
+            logger.error('Error restoring backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/backups/:filename
+     * Deletes a specific backup
+     */
+    router.delete('/backups/:filename', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const { filename } = req.params;
+            
+            const deleted = backupService.deleteBackup(filename);
+            
+            if (deleted) {
+                logger.info('Backup deleted by admin', { filename });
+                auditLogger.logAdminAction({
+                    action: auditLogger.ACTIONS.BACKUP_DELETE,
+                    req,
+                    target: auditLogger.createTarget('backup', filename)
+                });
+                
+                res.json({
+                    success: true,
+                    message: `Backup ${filename} removido`
+                });
+            } else {
+                res.status(404).json({ 
+                    success: false, 
+                    error: 'Backup não encontrado' 
+                });
+            }
+        } catch (error) {
+            logger.error('Error deleting backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/backups/cleanup
+     * Removes old backups beyond retention limit
+     */
+    router.post('/backups/cleanup', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const result = backupService.cleanupOldBackups();
+            
+            logger.info('Backup cleanup by admin', { removed: result.removed });
+            
+            res.json({
+                success: true,
+                data: result,
+                message: `${result.removed} backup(s) antigo(s) removido(s)`
+            });
+        } catch (error) {
+            logger.error('Error cleaning up backups', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/backups/:filename/download
+     * Downloads a backup file
+     */
+    router.get('/backups/:filename/download', (req, res) => {
+        try {
+            const backupService = require('../../services/backupService');
+            const path = require('path');
+            const { filename } = req.params;
+            
+            const backups = backupService.listBackups();
+            const backup = backups.find(b => b.filename === filename);
+            
+            if (!backup) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Backup não encontrado' 
+                });
+            }
+            
+            res.download(backup.filepath, filename);
+        } catch (error) {
+            logger.error('Error downloading backup', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== BOT UPDATE ROUTES ====================
+
+    /**
+     * GET /api/updates/status
+     * Returns current git status (branch, commit)
+     */
+    router.get('/updates/status', async (req, res) => {
+        try {
+            const [branchResult, commitResult] = await Promise.all([
+                execAsync('git rev-parse --abbrev-ref HEAD'),
+                execAsync('git rev-parse HEAD')
+            ]);
+            
+            res.json({
+                success: true,
+                data: {
+                    branch: branchResult.stdout.trim(),
+                    currentCommit: commitResult.stdout.trim()
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting git status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/check
+     * Fetches from remote and checks if there are updates available
+     */
+    router.post('/updates/check', async (req, res) => {
+        try {
+            logger.info('Checking for bot updates');
+            
+            // Fetch from remote
+            await execAsync('git fetch');
+            
+            // Get current branch
+            const branchResult = await execAsync('git rev-parse --abbrev-ref HEAD');
+            const branch = branchResult.stdout.trim();
+            
+            // Check how many commits behind
+            const behindResult = await execAsync(`git rev-list HEAD..origin/${branch} --count`);
+            const commitsBehind = parseInt(behindResult.stdout.trim(), 10);
+            
+            let changes = '';
+            if (commitsBehind > 0) {
+                // Get the log of incoming commits
+                const logResult = await execAsync(`git log HEAD..origin/${branch} --oneline --no-decorate`);
+                changes = logResult.stdout.trim();
+            }
+            
+            res.json({
+                success: true,
+                data: {
+                    hasUpdates: commitsBehind > 0,
+                    commitsBehind,
+                    changes,
+                    branch
+                }
+            });
+        } catch (error) {
+            logger.error('Error checking for updates', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/pull
+     * Pulls latest changes from remote and runs npm install
+     */
+    router.post('/updates/pull', async (req, res) => {
+        try {
+            logger.info('Pulling bot updates');
+            
+            // Pull from remote
+            const pullResult = await execAsync('git pull');
+            logger.info('Git pull completed', { output: pullResult.stdout });
+            
+            // Run npm install to update dependencies
+            logger.info('Running npm install...');
+            const npmResult = await execAsync('npm install --production');
+            logger.info('npm install completed', { output: npmResult.stdout });
+            
+            res.json({
+                success: true,
+                data: {
+                    gitOutput: pullResult.stdout.trim(),
+                    npmOutput: npmResult.stdout.trim()
+                }
+            });
+        } catch (error) {
+            logger.error('Error pulling updates', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/updates/restart
+     * Restarts the bot process
+     */
+    router.post('/updates/restart', async (req, res) => {
+        try {
+            logger.info('Bot restart requested via admin panel');
+            
+            // Send response before restarting
+            res.json({
+                success: true,
+                message: 'Bot está reiniciando...'
+            });
+            
+            // Give time for the response to be sent
+            setTimeout(() => {
+                logger.info('Restarting bot process...');
+                process.exit(0); // Exit cleanly, let process manager restart
+            }, 1000);
+        } catch (error) {
+            logger.error('Error restarting bot', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== SHARED ACCOUNTS ROUTES ====================
+    
+    /**
+     * Helper to get shared-accounts plugin API
+     */
+    function getSharedAccountsApi() {
+        const pluginService = require('../../services/pluginService');
+        return pluginService.getPluginApi('shared-accounts');
+    }
+
+    /**
+     * GET /api/accounts
+     * Returns all shared accounts (without decrypted sensitive data)
+     */
+    router.get('/accounts', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const accounts = api.getAllAccounts();
+            
+            res.json({
+                success: true,
+                data: {
+                    accounts,
+                    total: accounts.length,
+                    servers: api.SERVERS,
+                    permissionTypes: api.PERMISSION_TYPES,
+                    permissionActions: api.PERMISSION_ACTIONS
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting accounts', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== ACCESS LOGS ROUTES ====================
+    // These routes must be defined BEFORE /accounts/:id to avoid conflicts
+
+    /**
+     * GET /api/accounts/logs/all
+     * Returns access logs for all accounts
+     * Query params: limit, accountId, userId
+     */
+    router.get('/accounts/logs/all', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { limit, accountId, userId } = req.query;
+            const logs = api.getAccessLogs({
+                accountId: accountId || undefined,
+                userId: userId || undefined,
+                limit: limit ? parseInt(limit, 10) : 100
+            });
+            
+            res.json({
+                success: true,
+                data: {
+                    logs,
+                    total: logs.length
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting access logs', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/accounts/logs/cleanup
+     * Clears old access logs
+     * Query params: daysOld (default 30)
+     */
+    router.delete('/accounts/logs/cleanup', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { daysOld } = req.query;
+            const deletedCount = api.clearOldAccessLogs(daysOld ? parseInt(daysOld, 10) : 30);
+            
+            logger.info('Access logs cleanup', { deletedCount, daysOld: daysOld || 30 });
+            
+            res.json({
+                success: true,
+                data: {
+                    deletedCount,
+                    message: `${deletedCount} logs antigos removidos`
+                }
+            });
+        } catch (error) {
+            logger.error('Error cleaning up logs', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/qr-decode
+     * Decodes a QR code image and extracts TOTP secret
+     * Body: { image: "data:image/png;base64,..." }
+     */
+    router.post('/accounts/qr-decode', async (req, res) => {
+        try {
+            const { image } = req.body;
+            
+            if (!image) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Imagem é obrigatória' 
+                });
+            }
+            
+            // Extract base64 data from data URL
+            const matches = image.match(/^data:image\/\w+;base64,(.+)$/);
+            if (!matches) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Formato de imagem inválido. Envie uma imagem como data URL base64.' 
+                });
+            }
+            
+            const imageBuffer = Buffer.from(matches[1], 'base64');
+            
+            // Use the existing qrReader module
+            const qrReader = require('../../plugins/shared-accounts/qrReader');
+            
+            // Read QR code from buffer
+            const qrContent = await qrReader.readQRCode(imageBuffer);
+            
+            if (!qrContent) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Não foi possível ler o QR Code. Verifique se a imagem está nítida e contém um QR Code válido.' 
+                });
+            }
+            
+            // Check if it's an otpauth URL
+            if (qrContent.startsWith('otpauth://')) {
+                const totpData = qrReader.extractTOTPFromUrl(qrContent);
+                
+                if (totpData && totpData.secret) {
+                    logger.info('QR code decoded successfully', { 
+                        issuer: totpData.issuer, 
+                        label: totpData.label 
+                    });
+                    
+                    return res.json({
+                        success: true,
+                        data: {
+                            secret: totpData.secret,
+                            issuer: totpData.issuer,
+                            label: totpData.label,
+                            algorithm: totpData.algorithm,
+                            digits: totpData.digits,
+                            period: totpData.period
+                        }
+                    });
+                }
+                
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'O QR Code não contém um secret TOTP válido.' 
+                });
+            }
+            
+            // Maybe it's just a raw base32 secret
+            if (/^[A-Z2-7]+=*$/i.test(qrContent)) {
+                logger.info('QR code decoded as raw base32 secret');
+                
+                return res.json({
+                    success: true,
+                    data: {
+                        secret: qrContent.toUpperCase(),
+                        issuer: null,
+                        label: null
+                    }
+                });
+            }
+            
+            return res.status(400).json({ 
+                success: false, 
+                error: 'O QR Code não contém dados de autenticação TOTP válidos.' 
+            });
+        } catch (error) {
+            logger.error('Error decoding QR code', { error: error.message });
+            res.status(500).json({ success: false, error: `Erro ao processar QR Code: ${error.message}` });
+        }
+    });
+
+    // ==================== INDIVIDUAL ACCOUNT ROUTES ====================
+
+    /**
+     * GET /api/accounts/:id
+     * Returns a single account by ID
+     */
+    router.get('/accounts/:id', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const account = api.getAccount(id);
+            
+            if (!account) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Conta não encontrada' 
+                });
+            }
+            
+            res.json({
+                success: true,
+                data: account
+            });
+        } catch (error) {
+            logger.error('Error getting account', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts
+     * Creates a new shared account
+     * Body: { name, login, password, totpSecret, kafraPassword, server }
+     */
+    router.post('/accounts', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { name, login, password, totpSecret, kafraPassword, server } = req.body;
+            
+            if (!name || !login) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Nome e login são obrigatórios' 
+                });
+            }
+            
+            const account = api.createAccount({
+                name,
+                login,
+                password,
+                totpSecret,
+                kafraPassword,
+                server
+            });
+            
+            logger.info('Account created by admin', { accountId: account.id, name: account.name });
+            
+            res.json({
+                success: true,
+                data: account,
+                message: 'Conta criada com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error creating account', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/accounts/:id
+     * Updates an existing account
+     * Body: { name, login, password, totpSecret, kafraPassword, server }
+     */
+    router.put('/accounts/:id', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const updates = req.body;
+            
+            const account = api.updateAccount(id, updates);
+            
+            logger.info('Account updated by admin', { accountId: id, updates: Object.keys(updates) });
+            
+            res.json({
+                success: true,
+                data: account,
+                message: 'Conta atualizada com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error updating account', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/accounts/:id
+     * Deletes an account
+     */
+    router.delete('/accounts/:id', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const deleted = api.deleteAccount(id);
+            
+            if (!deleted) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Conta não encontrada' 
+                });
+            }
+            
+            logger.info('Account deleted by admin', { accountId: id });
+            
+            res.json({
+                success: true,
+                message: 'Conta removida com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error deleting account', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/:id/permissions
+     * Adds a permission to an account
+     * Body: { type, value, action }
+     */
+    router.post('/accounts/:id/permissions', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const { type, value, action } = req.body;
+            
+            if (!type || !value) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Tipo e valor são obrigatórios' 
+                });
+            }
+            
+            const permission = api.addPermission(id, type, value, action || 'allow');
+            
+            logger.info('Permission added to account by admin', { accountId: id, type, value, action });
+            
+            res.json({
+                success: true,
+                data: permission,
+                message: 'Permissão adicionada com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error adding permission', { error: error.message });
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/accounts/:id/permissions/:permId
+     * Removes a permission from an account
+     */
+    router.delete('/accounts/:id/permissions/:permId', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id, permId } = req.params;
+            const removed = api.removePermission(id, permId);
+            
+            if (!removed) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Permissão não encontrada' 
+                });
+            }
+            
+            logger.info('Permission removed from account by admin', { accountId: id, permissionId: permId });
+            
+            res.json({
+                success: true,
+                message: 'Permissão removida com sucesso'
+            });
+        } catch (error) {
+            logger.error('Error removing permission', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/:id/totp
+     * Generates current TOTP code for an account (for testing)
+     */
+    router.post('/accounts/:id/totp', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const totp = api.generateTOTP(id);
+            
+            if (!totp) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Não foi possível gerar código TOTP. Verifique se a conta existe e tem TOTP configurado.' 
+                });
+            }
+            
+            logger.info('TOTP generated by admin', { accountId: id });
+            
+            res.json({
+                success: true,
+                data: totp
+            });
+        } catch (error) {
+            logger.error('Error generating TOTP', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/accounts/:id/logs
+     * Returns access logs for a specific account
+     * Query params: limit
+     */
+    router.get('/accounts/:id/logs', async (req, res) => {
+        try {
+            const api = getSharedAccountsApi();
+            
+            if (!api) {
+                return res.status(503).json({ 
+                    success: false, 
+                    error: 'Plugin shared-accounts não está habilitado' 
+                });
+            }
+            
+            const { id } = req.params;
+            const { limit } = req.query;
+            
+            const logs = api.getAccessLogs({
+                accountId: id,
+                limit: limit ? parseInt(limit, 10) : 50
+            });
+            
+            res.json({
+                success: true,
+                data: {
+                    logs,
+                    total: logs.length
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting account logs', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });

@@ -1,12 +1,40 @@
 /**
  * Interaction Handler
- * Handles Discord slash command interactions
+ * Handles Discord slash command interactions, buttons, and autocomplete
  */
 
 const { Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+const metricsService = require('../services/metricsService');
+const auditLogger = require('../utils/auditLogger');
+const rateLimiter = require('../utils/rateLimiter');
+
+// Lazy load services to avoid circular dependencies
+let partyService = null;
+function getPartyService() {
+    if (!partyService) {
+        partyService = require('../services/partyService');
+    }
+    return partyService;
+}
+
+let pluginService = null;
+function getPluginService() {
+    if (!pluginService) {
+        pluginService = require('../services/pluginService');
+    }
+    return pluginService;
+}
+
+let pluginStorage = null;
+function getPluginStorage() {
+    if (!pluginStorage) {
+        pluginStorage = require('../utils/pluginStorage');
+    }
+    return pluginStorage;
+}
 
 class InteractionHandler {
     constructor() {
@@ -42,14 +70,82 @@ class InteractionHandler {
      * @param {Interaction} interaction - Discord interaction object
      */
     async handleInteraction(interaction) {
+        // Handle autocomplete
+        if (interaction.isAutocomplete()) {
+            return this._handleAutocomplete(interaction);
+        }
+        
+        // Handle buttons
+        if (interaction.isButton()) {
+            return this._handleButton(interaction);
+        }
+        
+        // Handle select menus
+        if (interaction.isStringSelectMenu()) {
+            return this._handleSelectMenu(interaction);
+        }
+        
+        // Handle modal submissions
+        if (interaction.isModalSubmit()) {
+            return this._handleModal(interaction);
+        }
+        
+        // Handle slash commands
         if (!interaction.isChatInputCommand()) return;
 
-        const command = this.commands.get(interaction.commandName);
+        // Check core commands first, then plugin commands
+        let command = this.commands.get(interaction.commandName);
+        let isPlugin = false;
+        
+        if (!command) {
+            // Check plugin commands
+            const pluginSvc = getPluginService();
+            command = pluginSvc.getPluginCommand(interaction.commandName);
+            isPlugin = !!command;
+        }
 
         if (!command) {
             logger.warn('Unknown command', { commandName: interaction.commandName });
             return;
         }
+
+        // Check guild-specific plugin permissions
+        if (isPlugin && command.pluginName && interaction.guildId) {
+            const storage = getPluginStorage();
+            const isEnabledForGuild = storage.isPluginEnabledForGuild(
+                command.pluginName,
+                interaction.guildId
+            );
+            
+            if (!isEnabledForGuild) {
+                return interaction.reply({
+                    content: '❌ Este comando está desativado neste servidor.',
+                    ephemeral: true
+                });
+            }
+        }
+
+        // Check rate limit
+        const limitResult = rateLimiter.checkLimit(
+            interaction.user.id, 
+            interaction.commandName
+        );
+        
+        if (limitResult.limited) {
+            logger.info('Rate limit exceeded', {
+                user: interaction.user.tag,
+                command: interaction.commandName,
+                category: limitResult.category,
+                remainingSeconds: limitResult.remainingSeconds
+            });
+            
+            const rateLimitMessage = rateLimiter.getRateLimitMessage(limitResult);
+            return interaction.reply(rateLimitMessage);
+        }
+
+        // Start timing for metrics
+        const startTime = Date.now();
+        let hasError = false;
 
         try {
             logger.info('Executing command', {
@@ -60,12 +156,30 @@ class InteractionHandler {
 
             await command.execute(interaction);
         } catch (error) {
+            hasError = true;
             logger.error('Error executing command', {
                 command: interaction.commandName,
                 error: error.message,
                 stack: error.stack,
-                user: interaction.user.tag
+                user: interaction.user.tag,
+                isPlugin
             });
+
+            // Record plugin error for auto-disable feature
+            if (isPlugin && command.pluginName) {
+                const pluginSvc = getPluginService();
+                const wasDisabled = pluginSvc.recordPluginError(
+                    command.pluginName,
+                    error,
+                    'command'
+                );
+                
+                if (wasDisabled) {
+                    logger.warn('Plugin auto-disabled due to errors', {
+                        plugin: command.pluginName
+                    });
+                }
+            }
 
             const errorMessage = '❌ Ocorreu um erro ao executar este comando.';
 
@@ -77,6 +191,158 @@ class InteractionHandler {
                 await interaction.reply({ content: errorMessage, ephemeral: true }).catch(() => {
                     // Ignore errors if interaction already handled
                 });
+            }
+        } finally {
+            // Record metrics regardless of success/failure
+            metricsService.recordCommandExecution({
+                command: interaction.commandName,
+                userId: interaction.user.id,
+                guildId: interaction.guild?.id || null,
+                startTime,
+                error: hasError
+            });
+            
+            // Record audit log
+            const executionTime = Date.now() - startTime;
+            auditLogger.logCommandExecution({
+                interaction,
+                command: interaction.commandName,
+                details: {
+                    subcommand: interaction.options?.getSubcommand?.(false) || null,
+                    executionTimeMs: executionTime
+                },
+                success: !hasError,
+                error: hasError ? 'Command execution failed' : null
+            });
+        }
+    }
+
+    /**
+     * Handles autocomplete interactions
+     * @param {Interaction} interaction - Autocomplete interaction
+     * @private
+     */
+    async _handleAutocomplete(interaction) {
+        // Check core commands first, then plugin commands
+        let command = this.commands.get(interaction.commandName);
+        
+        if (!command) {
+            const pluginSvc = getPluginService();
+            command = pluginSvc.getPluginCommand(interaction.commandName);
+        }
+        
+        if (!command || !command.autocomplete) {
+            return;
+        }
+        
+        try {
+            await command.autocomplete(interaction);
+        } catch (error) {
+            logger.error('Error handling autocomplete', { 
+                command: interaction.commandName,
+                error: error.message 
+            });
+        }
+    }
+
+    /**
+     * Handles button interactions
+     * @param {Interaction} interaction - Button interaction
+     * @private
+     */
+    async _handleButton(interaction) {
+        const customId = interaction.customId;
+        
+        try {
+            // Handle party buttons (using : as delimiter)
+            if (customId.startsWith('party:')) {
+                const handled = await getPartyService().handlePartyButton(interaction);
+                if (handled) return;
+            }
+            
+            // Add other button handlers here as needed
+            
+            logger.debug('Unhandled button interaction', { customId });
+            
+        } catch (error) {
+            logger.error('Error handling button', { 
+                customId,
+                error: error.message 
+            });
+            
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '❌ Erro ao processar ação.',
+                    ephemeral: true 
+                }).catch(() => {});
+            }
+        }
+    }
+
+    /**
+     * Handles select menu interactions
+     * @param {Interaction} interaction - Select menu interaction
+     * @private
+     */
+    async _handleSelectMenu(interaction) {
+        const customId = interaction.customId;
+        
+        try {
+            // Handle party select menus (using : as delimiter)
+            if (customId.startsWith('party:')) {
+                const handled = await getPartyService().handlePartyButton(interaction);
+                if (handled) return;
+            }
+            
+            // Add other select menu handlers here as needed
+            
+            logger.debug('Unhandled select menu interaction', { customId });
+            
+        } catch (error) {
+            logger.error('Error handling select menu', { 
+                customId,
+                error: error.message 
+            });
+            
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '❌ Erro ao processar seleção.',
+                    ephemeral: true 
+                }).catch(() => {});
+            }
+        }
+    }
+
+    /**
+     * Handles modal submission interactions
+     * @param {Interaction} interaction - Modal submit interaction
+     * @private
+     */
+    async _handleModal(interaction) {
+        const customId = interaction.customId;
+        
+        try {
+            // Handle party modals
+            if (customId.startsWith('party:modal:')) {
+                const handled = await getPartyService().handleModalSubmit(interaction);
+                if (handled) return;
+            }
+            
+            // Add other modal handlers here as needed
+            
+            logger.debug('Unhandled modal interaction', { customId });
+            
+        } catch (error) {
+            logger.error('Error handling modal', { 
+                customId,
+                error: error.message 
+            });
+            
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '❌ Erro ao processar formulário.',
+                    ephemeral: true 
+                }).catch(() => {});
             }
         }
     }

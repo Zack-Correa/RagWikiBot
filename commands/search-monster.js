@@ -12,7 +12,6 @@ const i18n = require('../utils/i18n');
 const { ValidationError, CommandError } = require('../utils/errors');
 const { createPaginatedEmbed, setupPagination } = require('../utils/pagination');
 const { createMonsterEmbed, createSearchEmbed, THUMBNAILS } = require('../utils/embedBuilder');
-const { buildSelectMenuFromResults } = require('../utils/selectMenuBuilder');
 const { setupMonsterCollector } = require('../utils/collectorHelper');
 const { PATTERNS, CUSTOM_IDS, EXTRACT_PATTERNS, TIMEOUTS } = require('../utils/constants');
 

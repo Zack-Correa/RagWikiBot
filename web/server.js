@@ -31,7 +31,7 @@ function getDiscordClient() {
 }
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Session configuration
@@ -109,14 +109,18 @@ app.use((err, req, res, next) => {
 /**
  * Starts the web server
  * @param {number} port - Port to listen on
+ * @param {string} host - Host to bind to (default: 0.0.0.0 for network access)
  * @returns {Promise<Object>} Server instance
  */
-function start(port) {
+function start(port, host = '0.0.0.0') {
     return new Promise((resolve, reject) => {
-        const server = app.listen(port, () => {
+        const server = app.listen(port, host, () => {
+            const networkUrl = host === '0.0.0.0' ? 'http://<seu-ip>:' + port : `http://${host}:${port}`;
             logger.info('Admin panel started', { 
-                port, 
-                url: `http://localhost:${port}` 
+                port,
+                host,
+                localUrl: `http://localhost:${port}`,
+                networkUrl
             });
             resolve(server);
         });

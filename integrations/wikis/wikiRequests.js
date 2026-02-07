@@ -7,6 +7,7 @@ const axios = require('axios');
 const settings = require('../const.json');
 const logger = require('../../utils/logger');
 const { APIError } = require('../../utils/errors');
+const apiCache = require('../../utils/apiCache');
 
 // Wiki endpoints configuration
 const WIKI_CONFIG = {
@@ -100,6 +101,23 @@ async function makeRequest(keyword, wikiType = 'wiki') {
     }
 }
 
+// ==================== CACHED WRAPPER ====================
+
+/**
+ * Cached version of makeRequest
+ * Cache TTL: 30 minutes (wiki content changes infrequently)
+ */
+async function makeRequestCached(keyword, wikiType = 'wiki') {
+    return apiCache.getOrFetch('WIKI_SEARCH', { keyword: keyword.trim().toLowerCase(), wikiType }, 
+        () => makeRequest(keyword, wikiType)
+    );
+}
+
 module.exports = {
-    makeRequest
+    makeRequest,
+    
+    // Cached version
+    cached: {
+        makeRequest: makeRequestCached
+    }
 };

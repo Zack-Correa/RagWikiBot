@@ -1,0 +1,15 @@
+{
+    "name": "party",
+    "version": "1.1.0",
+    "description": "Sistema de grupos para instancias do Ragnarok Online LATAM com sorteio de loot",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": ["grupo"],
+    "features": [
+        "Criar grupos para instâncias",
+        "Limites de classe personalizados",
+        "Notificações automáticas (2h, 30min, início)",
+        "Sistema de loot com sorteio entre membros"
+    ],
+    "dependencies": []
+}
