@@ -33,9 +33,11 @@ const PACKET_IDS = {
     // Login Server -> Client
     AC_ACCEPT_LOGIN: 0x0069,       // Login accepted (contains server list!)
     AC_ACCEPT_LOGIN2: 0x0AC4,      // Login accepted (newer)
+    AC_ACCEPT_LOGIN3: 0x0C32,      // Login accepted v3 (GNJoy LATAM, 559 bytes)
     AC_REFUSE_LOGIN: 0x006A,       // Login refused (standard, 23 bytes)
     AC_REFUSE_LOGIN3: 0x083E,      // Login refused v3 (GNJoy LATAM, 26 bytes)
     AC_ACK_HASH: 0x0205,           // Hash check ack
+    SC_NOTIFY_BAN: 0x0081,         // Server notification (already logged in, banned, etc.)
 
     // Client -> Char Server
     CH_ENTER: 0x0065,              // Enter char server
@@ -154,9 +156,182 @@ function buildCharEnterPacket(accountId, authCode, userLevel, gender) {
     return packet;
 }
 
+/**
+ * Builds GNJoy LATAM SSO Login packet (0x0825)
+ * Based on Wireshark capture analysis
+ * 
+ * Structure:
+ *   Offset  Size  Field
+ *   0       2     Packet ID: 0x0825
+ *   2       2     Packet Length: 417
+ *   4       4     Version: 1
+ *   8       1     Client Type: 0x16
+ *   9       24    Username (email)
+ *   33      27    Passcode/Hash (binary)
+ *   60      17    MAC Address: "50-EB-F6-26-B7-EE"
+ *   77      15    IP Address: "192.168.1.171"
+ *   92      325   Auth Token (Base64 string)
+ * 
+ * @param {string} username - Email/username
+ * @param {string} authToken - Base64 auth token (from launcher/web auth)
+ * @param {string} [macAddress] - MAC address (default: random)
+ * @param {string} [ipAddress] - IP address (default: 127.0.0.1)
+ * @param {number} [version=1] - Client version
+ * @param {number} [clientType=0x16] - Client type
+ * @returns {Buffer} SSO login packet (417 bytes)
+ */
+function buildSSOLoginPacket(username, authToken, macAddress = null, ipAddress = null, version = 1, clientType = 0x16) {
+    const packet = Buffer.alloc(417, 0);
+    let offset = 0;
+
+    // Packet ID
+    packet.writeUInt16LE(0x0825, offset); offset += 2;
+    // Packet Length
+    packet.writeUInt16LE(417, offset); offset += 2;
+    // Version
+    packet.writeUInt32LE(version, offset); offset += 4;
+    // Client Type
+    packet.writeUInt8(clientType, offset); offset += 1;
+    
+    // Username (24 bytes, null-padded)
+    const usernameBuf = Buffer.from(username, 'ascii');
+    usernameBuf.copy(packet, offset, 0, Math.min(usernameBuf.length, 23));
+    offset += 24;
+    
+    // Passcode/Hash (27 bytes) - appears to be some kind of hash or encrypted data
+    // From capture: 305400a869c119efff7f3f00000000ac05f913fecaadba00000000
+    // We'll use zeros for now (may need to be generated properly)
+    offset += 27;
+    
+    // MAC Address (17 bytes, null-terminated string)
+    const mac = macAddress || '50-EB-F6-26-B7-EE';
+    const macBuf = Buffer.from(mac, 'ascii');
+    macBuf.copy(packet, offset, 0, Math.min(macBuf.length, 16));
+    offset += 17;
+    
+    // IP Address (15 bytes, null-terminated string)
+    const ip = ipAddress || '127.0.0.1';
+    const ipBuf = Buffer.from(ip, 'ascii');
+    ipBuf.copy(packet, offset, 0, Math.min(ipBuf.length, 14));
+    offset += 15;
+    
+    // Auth Token (325 bytes, Base64 string, null-terminated)
+    const tokenBuf = Buffer.from(authToken, 'ascii');
+    tokenBuf.copy(packet, offset, 0, Math.min(tokenBuf.length, 324));
+    
+    return packet;
+}
+
 // ============================================================
 // Packet Parsers
 // ============================================================
+
+/**
+ * Parses GNJoy LATAM login accepted response (0x0C32)
+ * Structure: Header (67 bytes) + Server entries (165 bytes each)
+ * Each server entry:
+ *   Offset  Size  Field
+ *   0       2     Padding (0x0000)
+ *   2       2     Port (0x1194 = 4500)
+ *   4       20    Server name (null-padded)
+ *   24      2     Player count (uint16LE)
+ *   26      4     Padding
+ *   30      128   URL string (null-terminated)
+ *   158     7     Suffix data
+ * 
+ * @param {Buffer} data - Raw packet data
+ * @returns {Object|null} Parsed response with server list
+ */
+function parseGNJoyLoginAccepted(data) {
+    if (!data || data.length < 4) return null;
+
+    const packetId = data.readUInt16LE(0);
+    const packetLength = data.readUInt16LE(2);
+
+    if (packetId !== PACKET_IDS.AC_ACCEPT_LOGIN3) {
+        return null;
+    }
+
+    try {
+        // Header: ID(2) + Length(2) + AuthCode(4) + AccountID(4) + ... = 67 bytes
+        const headerSize = 67;
+        const entrySize = 165;
+        
+        const authCode = data.readUInt32LE(4);
+        const accountId = data.readUInt32LE(8);
+
+        // Parse server entries
+        const servers = [];
+        let offset = headerSize;
+
+        // Find entries by searching for port pattern (0x1194 = 4500)
+        const portPattern = Buffer.from([0x94, 0x11]);
+        let searchIdx = headerSize;
+
+        while (searchIdx + entrySize <= data.length && searchIdx + entrySize <= packetLength) {
+            // Look for port pattern
+            const portIdx = data.indexOf(portPattern, searchIdx);
+            if (portIdx === -1 || portIdx >= packetLength) break;
+
+            // Entry starts 2 bytes before the port (padding)
+            const entryStart = portIdx - 2;
+            if (entryStart < searchIdx) {
+                searchIdx = portIdx + 1;
+                continue;
+            }
+
+            // Read server name (20 bytes after port)
+            const nameStart = portIdx + 2;
+            const nameEnd = data.indexOf(0, nameStart);
+            const serverName = data.slice(nameStart, nameEnd >= nameStart ? nameEnd : nameStart + 20).toString('ascii');
+
+            // Player count (2 bytes at nameStart + 20)
+            const playerCount = data.readUInt16LE(nameStart + 20);
+
+            // URL (starts after name + padding)
+            const urlStart = data.indexOf(Buffer.from('lt-'), nameStart);
+            let serverUrl = '';
+            if (urlStart >= 0 && urlStart < nameStart + 50) {
+                const urlEnd = data.indexOf(0, urlStart);
+                serverUrl = data.slice(urlStart, urlEnd > urlStart ? urlEnd : urlStart + 50).toString('ascii');
+            }
+
+            // Extract IP and port from URL if available
+            let ip = '';
+            let port = 4500;
+            if (serverUrl) {
+                const urlMatch = serverUrl.match(/^([^:]+):(\d+)$/);
+                if (urlMatch) {
+                    ip = urlMatch[1];
+                    port = parseInt(urlMatch[2], 10);
+                }
+            }
+
+            servers.push({
+                name: serverName,
+                playerCount,
+                ip,
+                port,
+                url: serverUrl,
+                serverType: 0,
+                serverIndex: servers.length
+            });
+
+            // Move to next entry
+            searchIdx = entryStart + entrySize;
+        }
+
+        return {
+            packetId,
+            authCode,
+            accountId,
+            servers
+        };
+    } catch (error) {
+        logger.error('Error parsing GNJoy login response', { error: error.message });
+        return null;
+    }
+}
 
 /**
  * Parses login accepted response (0x0069 or 0x0AC4)
@@ -169,6 +344,11 @@ function parseLoginAccepted(data) {
 
     const packetId = data.readUInt16LE(0);
     const packetLength = data.readUInt16LE(2);
+
+    // Try GNJoy format first
+    if (packetId === PACKET_IDS.AC_ACCEPT_LOGIN3) {
+        return parseGNJoyLoginAccepted(data);
+    }
 
     if (packetId !== PACKET_IDS.AC_ACCEPT_LOGIN && packetId !== PACKET_IDS.AC_ACCEPT_LOGIN2) {
         return null;
@@ -309,9 +489,11 @@ function identifyPacket(data) {
     const knownPackets = {
         [PACKET_IDS.AC_ACCEPT_LOGIN]: 'Login Accepted (server list with player counts)',
         [PACKET_IDS.AC_ACCEPT_LOGIN2]: 'Login Accepted v2 (server list with player counts)',
+        [PACKET_IDS.AC_ACCEPT_LOGIN3]: 'Login Accepted v3 (GNJoy LATAM, server list with player counts)',
         [PACKET_IDS.AC_REFUSE_LOGIN]: 'Login Refused (standard)',
         [PACKET_IDS.AC_REFUSE_LOGIN3]: 'Login Refused v3 (GNJoy)',
         [PACKET_IDS.AC_ACK_HASH]: 'Hash Check Acknowledgement',
+        [PACKET_IDS.SC_NOTIFY_BAN]: 'Server Notification (already logged in, banned, etc.)',
     };
 
     if (knownPackets[packetId]) {
@@ -460,6 +642,143 @@ function sendPacket(host, port, packet, timeoutMs = 5000) {
                 port,
                 error: err.code || err.message,
                 elapsed: Date.now() - startTime
+            });
+        });
+
+        socket.connect(port, host);
+    });
+}
+
+/**
+ * Attempts GNJoy SSO login with manual auth token
+ * @param {string} host
+ * @param {number} port
+ * @param {string} username - Email/username
+ * @param {string} authToken - Base64 auth token (from Wireshark capture or manual)
+ * @param {string} [macAddress] - MAC address
+ * @param {string} [ipAddress] - IP address
+ * @param {number} [timeoutMs=8000]
+ * @returns {Promise<Object>} Login result
+ */
+function attemptSSOLogin(host, port, username, authToken, macAddress = null, ipAddress = null, timeoutMs = 8000) {
+    return new Promise((resolve) => {
+        const startTime = Date.now();
+        const socket = new net.Socket();
+        const receivedData = [];
+
+        socket.setTimeout(timeoutMs);
+
+        socket.on('connect', () => {
+            const ssoPacket = buildSSOLoginPacket(username, authToken, macAddress, ipAddress);
+            socket.write(ssoPacket);
+        });
+
+        socket.on('data', (chunk) => {
+            receivedData.push(chunk);
+            // Give server a moment to send full data
+            setTimeout(() => {
+                socket.destroy();
+            }, 500);
+        });
+
+        socket.on('close', () => {
+            const data = receivedData.length > 0 ? Buffer.concat(receivedData) : null;
+            const responseTime = Date.now() - startTime;
+
+            if (!data) {
+                return resolve({
+                    success: false,
+                    error: 'No response data',
+                    responseTime,
+                    strategy: 'sso'
+                });
+            }
+
+            // Try to parse as login accepted (0x0069, 0x0AC4, or 0x0C32)
+            const loginResult = parseLoginAccepted(data);
+            if (loginResult) {
+                return resolve({
+                    success: true,
+                    type: 'login_accepted',
+                    strategy: 'sso',
+                    servers: loginResult.servers,
+                    authData: {
+                        accountId: loginResult.accountId,
+                        authCode: loginResult.authCode
+                    },
+                    responseTime
+                });
+            }
+
+            // Check for server notification (0x0081)
+            const respPktId = data.readUInt16LE(0);
+            if (respPktId === PACKET_IDS.SC_NOTIFY_BAN && data.length >= 3) {
+                const errorCode = data.readUInt8(2);
+                const reasons = {
+                    0: 'Server shut down',
+                    1: 'Someone logged in with this ID',
+                    2: 'Timed out / connection lost',
+                    3: 'Out of memory',
+                    4: 'Server full',
+                    5: 'Underaged',
+                    8: 'Already logged in / Server still recognizes last login',
+                    9: 'Too many connections from this IP',
+                    10: 'Banned',
+                    15: 'IP not allowed',
+                };
+                return resolve({
+                    success: false,
+                    type: 'server_notification',
+                    strategy: 'sso',
+                    errorCode,
+                    reason: reasons[errorCode] || `Unknown notification (${errorCode})`,
+                    responseTime
+                });
+            }
+
+            // Try to parse as login refused
+            const refusedResult = parseLoginRefused(data);
+            if (refusedResult) {
+                return resolve({
+                    success: false,
+                    type: 'login_refused',
+                    strategy: 'sso',
+                    packetName: refusedResult.packetName,
+                    errorCode: refusedResult.errorCode,
+                    reason: refusedResult.reason,
+                    responseTime
+                });
+            }
+
+            // Unknown response
+            const packetInfo = identifyPacket(data);
+            resolve({
+                success: false,
+                type: 'unknown_response',
+                strategy: 'sso',
+                packetInfo,
+                rawHex: data.slice(0, 64).toString('hex'),
+                responseTime
+            });
+        });
+
+        socket.on('timeout', () => {
+            socket.destroy();
+            resolve({
+                success: false,
+                error: 'timeout',
+                elapsed: Date.now() - startTime,
+                strategy: 'sso'
+            });
+        });
+
+        socket.on('error', (err) => {
+            socket.destroy();
+            resolve({
+                success: false,
+                error: err.code || err.message,
+                elapsed: Date.now() - startTime,
+                strategy: 'sso'
             });
         });
 
@@ -632,9 +951,11 @@ async function attemptLogin(host, port, username, password, timeoutMs = 8000) {
 module.exports = {
     PACKET_IDS,
     buildLoginPacket,
+    buildSSOLoginPacket,
     buildPingPacket,
     buildCharEnterPacket,
     parseLoginAccepted,
+    parseGNJoyLoginAccepted,
     parseLoginRefused,
     getRefuseReason,
     identifyPacket,
@@ -642,6 +963,7 @@ module.exports = {
     sendPacket,
     attemptLogin,
     attemptLoginSingle,
+    attemptSSOLogin,
     // Helpers
     writeUInt16LE,
     writeUInt32LE,

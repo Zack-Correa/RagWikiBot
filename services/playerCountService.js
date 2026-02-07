@@ -132,7 +132,127 @@ function saveData(data) {
 }
 
 // ============================================================
-// Strategy 1: Login-based (most reliable)
+// Strategy 0: SSO Login with manual token (GNJoy LATAM)
+// ============================================================
+
+/**
+ * Attempts to get player counts via SSO login with manual auth token
+ * Requires RO_PROBE_USERNAME and RO_AUTH_TOKEN env vars
+ * Token can be extracted from Wireshark capture of the game client
+ * @returns {Promise<Object|null>} Server list with player counts, or null
+ */
+async function trySSOStrategy() {
+    const username = process.env.RO_PROBE_USERNAME;
+    const authToken = process.env.RO_AUTH_TOKEN;
+
+    if (!username || !authToken) {
+        logger.debug('SSO strategy skipped: RO_PROBE_USERNAME/RO_AUTH_TOKEN not set');
+        return null;
+    }
+
+    logger.info('Attempting SSO login strategy (GNJoy LATAM) for player count...');
+
+    try {
+        // Get MAC address (use a consistent one or random)
+        const os = require('os');
+        const networkInterfaces = os.networkInterfaces();
+        let macAddress = '50-EB-F6-26-B7-EE'; // Default from capture
+        for (const iface of Object.values(networkInterfaces)) {
+            if (iface) {
+                for (const addr of iface) {
+                    if (addr.mac && addr.mac !== '00:00:00:00:00:00') {
+                        macAddress = addr.mac.replace(/:/g, '-');
+                        break;
+                    }
+                }
+                if (macAddress !== '50-EB-F6-26-B7-EE') break;
+            }
+        }
+
+        // Get local IP
+        let ipAddress = '127.0.0.1';
+        for (const iface of Object.values(networkInterfaces)) {
+            if (iface) {
+                for (const addr of iface) {
+                    if (addr.family === 'IPv4' && !addr.internal) {
+                        ipAddress = addr.address;
+                        break;
+                    }
+                }
+                if (ipAddress !== '127.0.0.1') break;
+            }
+        }
+
+        const result = await roProtocol.attemptSSOLogin(
+            CONFIG.accountServer.host,
+            CONFIG.accountServer.port,
+            username,
+            authToken,
+            macAddress,
+            ipAddress,
+            CONFIG.loginTimeoutMs
+        );
+
+        if (result.success && result.servers) {
+            logger.info('SSO strategy succeeded', {
+                serverCount: result.servers.length,
+                servers: result.servers.map(s => ({ name: s.name, players: s.playerCount }))
+            });
+
+            // Save discovered char servers
+            discoveredCharServers = result.servers.map(s => ({
+                name: s.name,
+                ip: s.ip || s.url?.split(':')[0] || '',
+                port: s.port,
+                discoveredAt: new Date().toISOString()
+            }));
+
+            return {
+                strategy: 'sso',
+                timestamp: new Date().toISOString(),
+                responseTime: result.responseTime,
+                servers: result.servers.map(s => ({
+                    name: s.name,
+                    playerCount: s.playerCount || s.userCount || 0,
+                    ip: s.ip || s.url?.split(':')[0] || '',
+                    port: s.port,
+                    url: s.url,
+                    serverType: s.serverType || 0,
+                    serverIndex: s.serverIndex || 0
+                }))
+            };
+        }
+
+        if (result.type === 'server_notification') {
+            logger.warn('SSO strategy: server notification', {
+                errorCode: result.errorCode,
+                reason: result.reason
+            });
+            // Error 8 = already logged in, but token format is correct!
+            if (result.errorCode === 8) {
+                logger.info('Token format is valid! Account is just already logged in.');
+            }
+        } else if (result.type === 'login_refused') {
+            logger.warn('SSO strategy: login refused', {
+                errorCode: result.errorCode,
+                reason: result.reason
+            });
+        } else {
+            logger.warn('SSO strategy failed', {
+                type: result.type,
+                error: result.error
+            });
+        }
+
+        return null;
+    } catch (error) {
+        logger.error('SSO strategy error', { error: error.message });
+        return null;
+    }
+}
+
+// ============================================================
+// Strategy 1: Login-based (standard RO protocol)
 // ============================================================
 
 /**
@@ -393,20 +513,26 @@ async function checkPlayerCount(force = false) {
         error: null
     };
 
-    // Strategy 1: Login-based (most reliable)
-    const loginResult = await tryLoginStrategy();
-    if (loginResult) {
-        checkResult.strategy = 'login';
+    // Strategy 0: SSO Login with manual token (GNJoy LATAM - highest priority)
+    const ssoResult = await trySSOStrategy();
+    
+    // Strategy 1: Login-based (standard RO protocol - fallback)
+    const loginResult = ssoResult ? null : await tryLoginStrategy();
+    
+    // Use SSO result if available, otherwise fallback to standard login
+    const authResult = ssoResult || loginResult;
+    if (authResult) {
+        checkResult.strategy = authResult.strategy;
         checkResult.success = true;
-        checkResult.servers = loginResult.servers;
-        checkResult.responseTime = loginResult.responseTime;
+        checkResult.servers = authResult.servers;
+        checkResult.responseTime = authResult.responseTime;
 
         // Update stored data
         data.lastSuccessfulCheck = checkResult.timestamp;
         data.discoveredCharServers = discoveredCharServers;
 
         // Map to server names
-        for (const server of loginResult.servers) {
+        for (const server of authResult.servers) {
             const serverKey = mapServerName(server.name);
             if (serverKey) {
                 data.servers[serverKey] = {
@@ -422,12 +548,12 @@ async function checkPlayerCount(force = false) {
         // Add to history
         data.history.unshift({
             timestamp: checkResult.timestamp,
-            strategy: 'login',
-            servers: loginResult.servers.map(s => ({
+            strategy: authResult.strategy,
+            servers: authResult.servers.map(s => ({
                 name: s.name,
                 playerCount: s.playerCount
             })),
-            totalPlayers: loginResult.servers.reduce((sum, s) => sum + s.playerCount, 0)
+            totalPlayers: authResult.servers.reduce((sum, s) => sum + (s.playerCount || 0), 0)
         });
     }
 
@@ -616,7 +742,8 @@ function getDiagnostics() {
             charServerHosts: CONFIG.charServerHosts,
             charServerPorts: CONFIG.charServerPorts,
             checkIntervalMs: CONFIG.checkIntervalMs,
-            loginStrategyEnabled: !!(process.env.RO_PROBE_USERNAME && process.env.RO_PROBE_PASSWORD)
+            loginStrategyEnabled: !!(process.env.RO_PROBE_USERNAME && process.env.RO_PROBE_PASSWORD),
+        ssoStrategyEnabled: !!(process.env.RO_PROBE_USERNAME && process.env.RO_AUTH_TOKEN)
         },
         probeResults: data.probeResults || {},
         discoveredCharServers: data.discoveredCharServers || [],
