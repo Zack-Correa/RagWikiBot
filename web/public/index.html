@@ -1239,58 +1239,74 @@
             </div>
 
             <!-- Server Status Table -->
-            <div class="card" style="margin-top: 1rem;">
-                <h3>Status dos Servidores</h3>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Servidor</th>
-                            <th>Status</th>
-                            <th>Latência</th>
-                            <th>Players</th>
-                            <th>Último Check</th>
-                        </tr>
-                    </thead>
-                    <tbody id="server-status-table">
-                        <tr><td colspan="5">Carregando...</td></tr>
-                    </tbody>
-                </table>
-                <button class="btn btn-primary" onclick="forceServerCheck()" style="margin-top: 0.5rem;">
-                    🔄 Verificar Agora
-                </button>
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>Status dos Servidores</h3>
+                    <div class="srv-card-actions">
+                        <button class="btn btn-primary btn-sm" onclick="forcePlayerCheck()" id="btn-force-player-check">
+                            👥 Atualizar Players
+                        </button>
+                        <button class="btn btn-sm" onclick="forceServerCheck()" id="btn-force-server-check">
+                            🔄 Verificar Status
+                        </button>
+                    </div>
+                </div>
+                <div class="srv-table-container">
+                    <table class="srv-table">
+                        <thead>
+                            <tr>
+                                <th>Servidor</th>
+                                <th>Status</th>
+                                <th>Latência</th>
+                                <th>Players</th>
+                                <th>Último Check</th>
+                            </tr>
+                        </thead>
+                        <tbody id="server-status-table">
+                            <tr><td colspan="5" class="srv-loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="srv-last-update" id="srv-last-update"></div>
             </div>
 
             <!-- Player Count Chart -->
-            <div class="card" style="margin-top: 1rem;">
-                <h3>Player Count — Timeline</h3>
-                <div style="margin-bottom: 0.5rem;">
-                    <button class="btn btn-sm" onclick="loadPlayerChart(6)">6h</button>
-                    <button class="btn btn-sm btn-primary" onclick="loadPlayerChart(24)">24h</button>
-                    <button class="btn btn-sm" onclick="loadPlayerChart(72)">3d</button>
-                    <button class="btn btn-sm" onclick="loadPlayerChart(168)">7d</button>
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>Player Count — Timeline</h3>
+                    <div class="srv-chart-range">
+                        <button class="btn btn-sm srv-range-btn" data-hours="6" onclick="loadPlayerChart(6)">6h</button>
+                        <button class="btn btn-sm srv-range-btn active" data-hours="24" onclick="loadPlayerChart(24)">24h</button>
+                        <button class="btn btn-sm srv-range-btn" data-hours="72" onclick="loadPlayerChart(72)">3d</button>
+                        <button class="btn btn-sm srv-range-btn" data-hours="168" onclick="loadPlayerChart(168)">7d</button>
+                    </div>
                 </div>
-                <div style="position: relative; height: 300px;">
+                <div class="srv-chart-wrapper">
                     <canvas id="player-count-chart"></canvas>
                 </div>
             </div>
 
             <!-- Daily Stats Table -->
-            <div class="card" style="margin-top: 1rem;">
-                <h3>Agregados Diários</h3>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Data</th>
-                            <th>Capturas</th>
-                            <th>Média</th>
-                            <th>Pico</th>
-                            <th>Mínimo</th>
-                        </tr>
-                    </thead>
-                    <tbody id="daily-stats-table">
-                        <tr><td colspan="5">Carregando...</td></tr>
-                    </tbody>
-                </table>
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>Agregados Diários</h3>
+                </div>
+                <div class="srv-table-container">
+                    <table class="srv-table">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th class="text-center">Capturas</th>
+                                <th class="text-right">Média</th>
+                                <th class="text-right">Pico</th>
+                                <th class="text-right">Mínimo</th>
+                            </tr>
+                        </thead>
+                        <tbody id="daily-stats-table">
+                            <tr><td colspan="5" class="srv-loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </section>
 

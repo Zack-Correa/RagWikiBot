@@ -4070,3 +4070,230 @@ code.dash-info-value {
     margin: 0;
     font-size: 14px;
 }
+
+/* ==================== SERVERS SECTION ==================== */
+
+.srv-card {
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    margin-top: 20px;
+    overflow: hidden;
+}
+
+.srv-card h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.srv-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.srv-card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.srv-table-container {
+    overflow-x: auto;
+}
+
+.srv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.srv-table th,
+.srv-table td {
+    padding: 12px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.srv-table th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.srv-table td {
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.srv-table tbody tr:hover {
+    background: rgba(245, 166, 35, 0.05);
+}
+
+.srv-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.srv-table .text-center {
+    text-align: center;
+}
+
+.srv-table .text-right {
+    text-align: right;
+}
+
+.srv-table .srv-loading {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 30px 20px;
+    font-style: italic;
+}
+
+/* Server status badges */
+.srv-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.srv-status.online {
+    background: rgba(59, 165, 92, 0.15);
+    color: #3BA55C;
+}
+
+.srv-status.offline {
+    background: rgba(237, 66, 69, 0.15);
+    color: #ED4245;
+}
+
+.srv-status.unknown {
+    background: rgba(153, 153, 153, 0.15);
+    color: #999;
+}
+
+/* Server name with emoji */
+.srv-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+/* Player count highlight */
+.srv-players {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text-primary);
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* Latency display */
+.srv-latency {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+}
+
+.srv-latency.fast {
+    color: #3BA55C;
+}
+
+.srv-latency.medium {
+    color: #FAA61A;
+}
+
+.srv-latency.slow {
+    color: #ED4245;
+}
+
+/* Last update footer */
+.srv-last-update {
+    padding: 10px 20px;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border-color);
+    text-align: right;
+}
+
+/* Chart area */
+.srv-chart-wrapper {
+    position: relative;
+    height: 320px;
+    padding: 16px 20px 20px;
+}
+
+.srv-chart-range {
+    display: flex;
+    gap: 4px;
+}
+
+.srv-range-btn {
+    padding: 4px 12px !important;
+    font-size: 12px !important;
+    border-radius: 6px !important;
+    background: var(--bg-tertiary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-secondary) !important;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.srv-range-btn:hover {
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+}
+
+.srv-range-btn.active {
+    background: var(--primary-color) !important;
+    border-color: var(--primary-color) !important;
+    color: #fff !important;
+}
+
+/* Daily stats values */
+.srv-table .daily-value {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+}
+
+.srv-table .daily-peak {
+    color: #3BA55C;
+    font-weight: 600;
+}
+
+.srv-table .daily-low {
+    color: #ED4245;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .srv-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .srv-card-actions {
+        width: 100%;
+    }
+
+    .srv-card-actions .btn {
+        flex: 1;
+    }
+
+    .srv-chart-wrapper {
+        height: 250px;
+    }
+}

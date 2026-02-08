@@ -3547,21 +3547,31 @@ async function removeAccountPermission(permId) {
 // ==================== SERVERS & PLAYER COUNTS ====================
 
 let playerCountChart = null;
+let currentChartHours = 24;
 
-function initServers() {
-    // Load when section becomes visible
-}
+const SERVER_EMOJIS = {
+    FREYA: '⚔️',
+    NIDHOGG: '🐉',
+    YGGDRASIL: '🌳',
+    ACCOUNT: '🔐'
+};
+
+const SERVER_LABELS = {
+    FREYA: 'Freya',
+    NIDHOGG: 'Nidhogg',
+    YGGDRASIL: 'Yggdrasil',
+    ACCOUNT: 'Account Server'
+};
 
 async function loadServerData() {
     try {
-        // Load server status + player counts + stats in parallel
         const [statusRes, playerRes, statsRes] = await Promise.all([
             fetch('/api/server-status').then(r => r.json()).catch(() => null),
             fetch('/api/player-count').then(r => r.json()).catch(() => null),
             fetch('/api/player-count/stats?days=30').then(r => r.json()).catch(() => null)
         ]);
 
-        // Update stat cards
+        // Stat cards
         if (playerRes?.data) {
             document.getElementById('srv-total-players').textContent =
                 playerRes.data.totalPlayers?.toLocaleString('pt-BR') || '—';
@@ -3579,99 +3589,160 @@ async function loadServerData() {
         if (statusRes?.data) {
             const servers = statusRes.data.servers || {};
             let onlineCount = 0;
+            let totalCount = 0;
             const rows = [];
 
-            for (const [key, srv] of Object.entries(servers)) {
+            // Game servers first, then account
+            const order = ['FREYA', 'NIDHOGG', 'YGGDRASIL', 'ACCOUNT'];
+
+            for (const key of order) {
+                const srv = servers[key];
+                if (!srv) continue;
+                totalCount++;
+
                 const isOnline = srv.online === true;
+                const isOffline = srv.online === false;
                 if (isOnline) onlineCount++;
 
-                const icon = isOnline ? '🟢' : srv.online === false ? '🔴' : '⚪';
-                const latency = srv.responseTimeMs != null ? `${srv.responseTimeMs}ms` : '—';
+                const statusClass = isOnline ? 'online' : isOffline ? 'offline' : 'unknown';
+                const statusLabel = isOnline ? 'Online' : isOffline ? 'Offline' : '—';
+                const statusDot = isOnline ? '●' : isOffline ? '●' : '○';
+
+                const ms = srv.responseTimeMs;
+                const latencyClass = ms != null ? (ms < 20 ? 'fast' : ms < 100 ? 'medium' : 'slow') : '';
+                const latencyText = ms != null ? `${ms}ms` : '—';
+
+                const pc = playerRes?.data?.servers?.find(s => s.key === key);
+                const playersText = pc ? pc.playerCount.toLocaleString('pt-BR') : '—';
+
                 const lastCheck = srv.lastCheck ? new Date(srv.lastCheck).toLocaleString('pt-BR', {
-                    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit'
+                    timeZone: 'America/Sao_Paulo',
+                    day: '2-digit', month: '2-digit',
+                    hour: '2-digit', minute: '2-digit'
                 }) : '—';
 
-                // Get player count for this server
-                const pc = playerRes?.data?.servers?.find(s => s.key === key);
-                const players = pc ? pc.playerCount.toLocaleString('pt-BR') : '—';
-
                 rows.push(`<tr>
-                    <td><strong>${key}</strong></td>
-                    <td>${icon} ${isOnline ? 'Online' : srv.online === false ? 'Offline' : '?'}</td>
-                    <td>${latency}</td>
-                    <td>${players}</td>
+                    <td><span class="srv-name">${SERVER_EMOJIS[key] || ''} ${SERVER_LABELS[key] || key}</span></td>
+                    <td><span class="srv-status ${statusClass}">${statusDot} ${statusLabel}</span></td>
+                    <td><span class="srv-latency ${latencyClass}">${latencyText}</span></td>
+                    <td><span class="srv-players">${key !== 'ACCOUNT' ? playersText : '—'}</span></td>
                     <td>${lastCheck}</td>
                 </tr>`);
             }
 
-            document.getElementById('server-status-table').innerHTML = rows.join('') || '<tr><td colspan="5">Sem dados</td></tr>';
-            document.getElementById('srv-servers-online').textContent = `${onlineCount}/${Object.keys(servers).length}`;
+            document.getElementById('server-status-table').innerHTML =
+                rows.join('') || '<tr><td colspan="5" class="srv-loading">Sem dados</td></tr>';
+            document.getElementById('srv-servers-online').textContent = `${onlineCount}/${totalCount}`;
+
+            // Last update
+            const lastUpdated = statusRes.data.lastUpdated;
+            const updateEl = document.getElementById('srv-last-update');
+            if (updateEl && lastUpdated) {
+                const ts = new Date(lastUpdated).toLocaleString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                    day: '2-digit', month: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                });
+                updateEl.textContent = `Última atualização: ${ts}`;
+            }
         }
 
         // Daily stats table
         if (statsRes?.data?.daily) {
             const daily = statsRes.data.daily;
             const dates = Object.keys(daily).sort().reverse();
-            const rows = dates.map(date => {
-                const d = daily[date];
-                return `<tr>
-                    <td>${date}</td>
-                    <td>${d.captures || 0}</td>
-                    <td>${d.avgTotal?.toLocaleString('pt-BR') || '—'}</td>
-                    <td>${d.peak?.total?.toLocaleString('pt-BR') || '—'}</td>
-                    <td>${d.low?.total != null && d.low.total !== Infinity ? d.low.total.toLocaleString('pt-BR') : '—'}</td>
-                </tr>`;
-            });
-            document.getElementById('daily-stats-table').innerHTML = rows.join('') || '<tr><td colspan="5">Sem dados</td></tr>';
+            if (dates.length > 0) {
+                const rows = dates.map(date => {
+                    const d = daily[date];
+                    const avg = d.avgTotal != null ? Math.round(d.avgTotal).toLocaleString('pt-BR') : '—';
+                    const peak = d.peak?.total != null ? d.peak.total.toLocaleString('pt-BR') : '—';
+                    const low = d.low?.total != null && d.low.total !== Infinity ? d.low.total.toLocaleString('pt-BR') : '—';
+                    return `<tr>
+                        <td>${date}</td>
+                        <td class="text-center">${d.captures || 0}</td>
+                        <td class="text-right daily-value">${avg}</td>
+                        <td class="text-right daily-value daily-peak">${peak}</td>
+                        <td class="text-right daily-value daily-low">${low}</td>
+                    </tr>`;
+                });
+                document.getElementById('daily-stats-table').innerHTML = rows.join('');
+            } else {
+                document.getElementById('daily-stats-table').innerHTML =
+                    '<tr><td colspan="5" class="srv-loading">Nenhum dado diário disponível</td></tr>';
+            }
         }
 
-        // Load default chart
-        loadPlayerChart(24);
+        // Load chart
+        loadPlayerChart(currentChartHours);
     } catch (error) {
         console.error('Error loading server data:', error);
     }
 }
 
 async function loadPlayerChart(hours = 24) {
+    currentChartHours = hours;
+
+    // Update active button
+    document.querySelectorAll('.srv-range-btn').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.hours) === hours);
+    });
+
     try {
         const res = await fetch(`/api/player-count/history?hours=${hours}`);
         const json = await res.json();
-        if (!json.success || !json.data?.history?.length) return;
+
+        const canvas = document.getElementById('player-count-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        if (!json.success || !json.data?.history?.length) {
+            if (playerCountChart) playerCountChart.destroy();
+            playerCountChart = null;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Sem dados de player count para este período', canvas.width / 2, canvas.height / 2);
+            return;
+        }
 
         const history = json.data.history.reverse(); // oldest first
+
         const labels = history.map(h => {
             const d = new Date(h.t);
-            return d.toLocaleString('pt-BR', {
-                timeZone: 'America/Sao_Paulo',
-                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-            });
+            if (hours <= 24) {
+                return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+            }
+            return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
         });
 
-        const datasets = [];
         const colors = {
-            FREYA: { border: '#5865F2', bg: 'rgba(88,101,242,0.1)' },
-            NIDHOGG: { border: '#ED4245', bg: 'rgba(237,66,69,0.1)' },
-            YGGDRASIL: { border: '#3BA55C', bg: 'rgba(59,165,92,0.1)' },
-            total: { border: '#F5A623', bg: 'rgba(245,166,35,0.15)' }
+            FREYA: { border: '#5865F2', bg: 'rgba(88,101,242,0.08)' },
+            NIDHOGG: { border: '#ED4245', bg: 'rgba(237,66,69,0.08)' },
+            YGGDRASIL: { border: '#3BA55C', bg: 'rgba(59,165,92,0.08)' },
+            total: { border: '#F5A623', bg: 'rgba(245,166,35,0.12)' }
         };
 
-        // Individual server lines
+        const datasets = [];
+        const hasMultiplePoints = history.length > 1;
+
         for (const key of ['FREYA', 'NIDHOGG', 'YGGDRASIL']) {
             const data = history.map(h => h[key] ?? null);
             if (data.some(v => v != null)) {
                 datasets.push({
-                    label: key,
+                    label: SERVER_LABELS[key] || key,
                     data,
                     borderColor: colors[key].border,
                     backgroundColor: colors[key].bg,
                     fill: false,
                     tension: 0.3,
-                    pointRadius: 2
+                    pointRadius: hasMultiplePoints ? 3 : 6,
+                    pointHoverRadius: 6,
+                    borderWidth: 2
                 });
             }
         }
 
-        // Total line
         datasets.push({
             label: 'Total',
             data: history.map(h => h.total ?? null),
@@ -3679,12 +3750,11 @@ async function loadPlayerChart(hours = 24) {
             backgroundColor: colors.total.bg,
             fill: true,
             tension: 0.3,
-            pointRadius: 0,
+            pointRadius: hasMultiplePoints ? 0 : 6,
+            pointHoverRadius: 6,
             borderWidth: 2,
-            borderDash: [5, 5]
+            borderDash: [6, 3]
         });
-
-        const ctx = document.getElementById('player-count-chart').getContext('2d');
 
         if (playerCountChart) playerCountChart.destroy();
 
@@ -3696,20 +3766,37 @@ async function loadPlayerChart(hours = 24) {
                 maintainAspectRatio: false,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { position: 'top' },
+                    legend: {
+                        position: 'top',
+                        labels: { usePointStyle: true, padding: 16, font: { size: 12 } }
+                    },
                     tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.85)',
+                        titleFont: { size: 13 },
+                        bodyFont: { size: 12 },
+                        padding: 12,
                         callbacks: {
-                            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toLocaleString('pt-BR') || '—'}`
+                            label: ctx => `  ${ctx.dataset.label}: ${ctx.parsed.y?.toLocaleString('pt-BR') || '—'} jogadores`
                         }
                     }
                 },
                 scales: {
                     y: {
                         beginAtZero: true,
-                        ticks: { callback: v => v.toLocaleString('pt-BR') }
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: {
+                            callback: v => v.toLocaleString('pt-BR'),
+                            font: { size: 11 },
+                            color: '#888'
+                        }
                     },
                     x: {
-                        ticks: { maxTicksLimit: 12 }
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                        ticks: {
+                            maxTicksLimit: 12,
+                            font: { size: 11 },
+                            color: '#888'
+                        }
                     }
                 }
             }
@@ -3720,18 +3807,42 @@ async function loadPlayerChart(hours = 24) {
 }
 
 async function forceServerCheck() {
+    const btn = document.getElementById('btn-force-server-check');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Verificando...'; }
     try {
         showToast('Verificando servidores...', 'info');
         const res = await fetch('/api/server-status/check', { method: 'POST' });
         const json = await res.json();
         if (json.success) {
-            showToast('Verificação concluída!', 'success');
+            showToast('Verificação de status concluída!', 'success');
             loadServerData();
         } else {
-            showToast('Erro na verificação', 'error');
+            showToast(json.error || 'Erro na verificação', 'error');
         }
     } catch (error) {
-        showToast('Erro na verificação', 'error');
+        showToast('Erro na verificação de status', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Verificar Status'; }
+    }
+}
+
+async function forcePlayerCheck() {
+    const btn = document.getElementById('btn-force-player-check');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Atualizando...'; }
+    try {
+        showToast('Atualizando player counts via SSO...', 'info');
+        const res = await fetch('/api/player-count/check', { method: 'POST' });
+        const json = await res.json();
+        if (json.success) {
+            showToast('Player counts atualizados!', 'success');
+            loadServerData();
+        } else {
+            showToast(json.error || 'Erro ao atualizar players (token expirado?)', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao atualizar player counts', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '👥 Atualizar Players'; }
     }
 }
 
@@ -3752,3 +3863,4 @@ window.closeEditAccount = closeEditAccount;
 window.removeAccountPermission = removeAccountPermission;
 window.loadPlayerChart = loadPlayerChart;
 window.forceServerCheck = forceServerCheck;
+window.forcePlayerCheck = forcePlayerCheck;
