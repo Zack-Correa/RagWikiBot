@@ -1,73 +1,214 @@
 /**
  * Server Status Service
- * Monitors Ragnarok Online LATAM server availability
+ * Monitors Ragnarok Online LATAM server availability via TCP probes.
  * 
- * Server info from OpenKore (https://github.com/OpenKore/openkore):
- * [Latam - ROla: Freya/Nidhogg/Yggdrasil]
- * ip lt-account-01.gnjoylatam.com
- * port 6900
- * OTP_port 6951
+ * Probes each char server individually (lt-world-1/2/3) plus the
+ * account server, every 5 minutes.
  */
 
 const net = require('net');
 const logger = require('../utils/logger');
 const serverStatusStorage = require('../utils/serverStatusStorage');
 
-// Account Server Configuration (from OpenKore servers.txt)
-const ACCOUNT_SERVER = {
-    host: 'lt-account-01.gnjoylatam.com',
-    port: 6900
+// ============================================================
+// Server endpoints (discovered via 0x0C32 login response)
+// ============================================================
+
+const SERVERS = {
+    FREYA: {
+        name: 'Freya',
+        host: 'lt-world-1.gnjoylatam.com',
+        port: 4500,
+        emoji: '⚔️'
+    },
+    NIDHOGG: {
+        name: 'Nidhogg',
+        host: 'lt-world-2.gnjoylatam.com',
+        port: 4500,
+        emoji: '🐉'
+    },
+    YGGDRASIL: {
+        name: 'Yggdrasil',
+        host: 'lt-world-3.gnjoylatam.com',
+        port: 4500,
+        emoji: '🌳'
+    },
+    ACCOUNT: {
+        name: 'Account Server',
+        host: 'lt-account-01.gnjoylatam.com',
+        port: 6900,
+        emoji: '🔐'
+    }
 };
 
-// Check interval (6 hours)
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-
-// Timeout for TCP check (10 seconds)
-const TCP_TIMEOUT_MS = 10000;
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;  // 5 minutes
+const TCP_TIMEOUT_MS = 10000;              // 10 seconds
 
 let intervalId = null;
 let discordClient = null;
 let notificationChannelId = null;
+let lastResults = null;
+
+// ============================================================
+// TCP Probe
+// ============================================================
 
 /**
- * Initializes the server status service
- * @param {Client} client - Discord client
- * @param {string} [channelId] - Optional channel ID for notifications
+ * Probes a single TCP endpoint.
+ * @returns {Promise<{online: boolean, responseTime: number, reason?: string}>}
  */
-function initialize(client, channelId = null) {
-    discordClient = client;
-    notificationChannelId = channelId;
-    logger.info('Server status service initialized', {
-        server: `${ACCOUNT_SERVER.host}:${ACCOUNT_SERVER.port}`,
-        intervalHours: CHECK_INTERVAL_MS / (60 * 60 * 1000)
+function probeServer(host, port) {
+    return new Promise((resolve) => {
+        const startTime = Date.now();
+        const socket = new net.Socket();
+
+        socket.setTimeout(TCP_TIMEOUT_MS);
+
+        socket.on('connect', () => {
+            const responseTime = Date.now() - startTime;
+            socket.destroy();
+            resolve({ online: true, responseTime });
+        });
+
+        socket.on('timeout', () => {
+            socket.destroy();
+            resolve({ online: false, responseTime: TCP_TIMEOUT_MS, reason: 'Timeout' });
+        });
+
+        socket.on('error', (err) => {
+            const responseTime = Date.now() - startTime;
+            socket.destroy();
+            resolve({ online: false, responseTime, reason: err.code || err.message });
+        });
+
+        socket.connect(port, host);
     });
 }
 
-/**
- * Starts the server status monitoring
- */
+// ============================================================
+// Check all servers
+// ============================================================
+
+async function checkServers() {
+    logger.info('Server status: starting probe cycle...');
+    const results = {};
+    let anyChanged = false;
+
+    // Probe all servers in parallel
+    const probes = Object.entries(SERVERS).map(async ([key, srv]) => {
+        const probe = await probeServer(srv.host, srv.port);
+        results[key] = {
+            ...srv,
+            online: probe.online,
+            responseTime: probe.responseTime,
+            reason: probe.reason || null
+        };
+
+        // Update storage (tracks history + transitions)
+        const update = serverStatusStorage.updateServerStatus(key, probe.online, {
+            responseTimeMs: probe.responseTime,
+            reason: probe.reason
+        });
+
+        if (update.changed) {
+            anyChanged = true;
+            logger.info(`Server status CHANGED: ${srv.name} -> ${probe.online ? 'ONLINE' : 'OFFLINE'}`, {
+                reason: probe.reason
+            });
+        }
+
+        return { key, probe };
+    });
+
+    await Promise.all(probes);
+
+    // Log summary
+    const summary = Object.entries(results)
+        .map(([k, r]) => `${r.online ? '🟢' : '🔴'} ${r.name}: ${r.responseTime}ms`)
+        .join(' | ');
+    logger.info(`Server status: ${summary}`);
+
+    lastResults = {
+        timestamp: new Date().toISOString(),
+        servers: results
+    };
+
+    // Send Discord notification on status change
+    if (anyChanged) {
+        await sendStatusNotification(results);
+    }
+
+    return results;
+}
+
+// ============================================================
+// Discord notification
+// ============================================================
+
+async function sendStatusNotification(results) {
+    if (!discordClient || !notificationChannelId) return;
+
+    try {
+        const channel = await discordClient.channels.fetch(notificationChannelId);
+        if (!channel) return;
+
+        const { EmbedBuilder } = require('discord.js');
+
+        const allOnline = Object.values(results).every(r => r.online);
+        const gameServers = Object.entries(results).filter(([k]) => k !== 'ACCOUNT');
+
+        const embed = new EmbedBuilder()
+            .setColor(allOnline ? '#3BA55C' : '#ED4245')
+            .setTitle(allOnline ? '🟢 Servidores Online' : '🔴 Mudança de Status')
+            .setTimestamp();
+
+        const lines = gameServers.map(([, r]) => {
+            const icon = r.online ? '🟢' : '🔴';
+            const status = r.online ? 'Online' : `Offline (${r.reason || '?'})`;
+            return `${r.emoji} **${r.name}** — ${icon} ${status} (${r.responseTime}ms)`;
+        });
+
+        embed.setDescription(lines.join('\n'));
+        embed.setFooter({ text: 'BeeWiki • Status Monitor' });
+
+        await channel.send({ embeds: [embed] });
+    } catch (error) {
+        logger.error('Error sending status notification', { error: error.message });
+    }
+}
+
+// ============================================================
+// Lifecycle
+// ============================================================
+
+function initialize(client, channelId = null) {
+    discordClient = client;
+    notificationChannelId = channelId;
+    logger.info('Server status service initialized');
+}
+
 function start() {
     if (intervalId) {
         logger.warn('Server status service already running');
         return;
     }
-    
-    // Run first check after 1 minute
+
+    // First check after 30 seconds
     setTimeout(() => {
-        checkServers();
-    }, 60000);
-    
-    // Then run every 6 hours
-    intervalId = setInterval(checkServers, CHECK_INTERVAL_MS);
-    
-    logger.info('Server status service started', { 
-        intervalHours: CHECK_INTERVAL_MS / (60 * 60 * 1000) 
-    });
+        checkServers().catch(err => {
+            logger.error('Initial server status check failed', { error: err.message });
+        });
+    }, 30 * 1000);
+
+    intervalId = setInterval(() => {
+        checkServers().catch(err => {
+            logger.error('Periodic server status check failed', { error: err.message });
+        });
+    }, CHECK_INTERVAL_MS);
+
+    logger.info('Server status service started', { intervalMinutes: CHECK_INTERVAL_MS / 60000 });
 }
 
-/**
- * Stops the monitoring
- */
 function stop() {
     if (intervalId) {
         clearInterval(intervalId);
@@ -76,197 +217,27 @@ function stop() {
     }
 }
 
-/**
- * Checks if the account server is online via TCP connection
- * @returns {Promise<Object>} Check result
- */
-function checkAccountServer() {
-    return new Promise((resolve) => {
-        const startTime = Date.now();
-        const socket = new net.Socket();
-        
-        socket.setTimeout(TCP_TIMEOUT_MS);
-        
-        socket.on('connect', () => {
-            const responseTime = Date.now() - startTime;
-            socket.destroy();
-            logger.info('Server is ONLINE', {
-                host: ACCOUNT_SERVER.host,
-                port: ACCOUNT_SERVER.port,
-                responseTime
-            });
-            resolve({
-                online: true,
-                responseTime
-            });
-        });
-        
-        socket.on('timeout', () => {
-            socket.destroy();
-            logger.warn('Server check TIMEOUT', {
-                host: ACCOUNT_SERVER.host,
-                port: ACCOUNT_SERVER.port,
-                timeout: TCP_TIMEOUT_MS
-            });
-            resolve({
-                online: false,
-                responseTime: TCP_TIMEOUT_MS,
-                reason: 'Timeout'
-            });
-        });
-        
-        socket.on('error', (err) => {
-            const responseTime = Date.now() - startTime;
-            socket.destroy();
-            logger.warn('Server check FAILED', {
-                host: ACCOUNT_SERVER.host,
-                port: ACCOUNT_SERVER.port,
-                error: err.code || err.message,
-                responseTime
-            });
-            resolve({
-                online: false,
-                responseTime,
-                reason: err.code || err.message
-            });
-        });
-        
-        socket.connect(ACCOUNT_SERVER.port, ACCOUNT_SERVER.host);
-    });
-}
-
-/**
- * Main server check - updates status for all servers
- * All 3 game servers (Freya, Nidhogg, Yggdrasil) share the same account server
- */
-async function checkServers() {
-    logger.info('Starting server status check...', {
-        server: `${ACCOUNT_SERVER.host}:${ACCOUNT_SERVER.port}`
-    });
-    
-    const result = await checkAccountServer();
-    
-    // Update status for all servers
-    const servers = serverStatusStorage.SERVERS;
-    const results = {};
-    let statusChanged = false;
-    
-    for (const server of servers) {
-        const updateResult = serverStatusStorage.updateServerStatus(server, result.online, {
-            responseTimeMs: result.responseTime,
-            reason: result.reason
-        });
-        
-        results[server] = { 
-            online: result.online, 
-            responseTime: result.responseTime 
-        };
-        
-        if (updateResult.changed) {
-            statusChanged = true;
-        }
-    }
-    
-    // Send notification if status changed
-    if (statusChanged) {
-        await sendStatusNotification(result.online, result.reason);
-    }
-    
-    return results;
-}
-
-/**
- * Sends a status change notification
- * @param {boolean} online - New status
- * @param {string} [reason] - Reason if offline
- */
-async function sendStatusNotification(online, reason = null) {
-    if (!discordClient || !notificationChannelId) {
-        return;
-    }
-    
-    try {
-        const channel = await discordClient.channels.fetch(notificationChannelId);
-        
-        if (!channel) {
-            logger.warn('Notification channel not found', { channelId: notificationChannelId });
-            return;
-        }
-        
-        const { EmbedBuilder } = require('discord.js');
-        
-        const embed = new EmbedBuilder()
-            .setTimestamp();
-        
-        if (online) {
-            embed
-                .setColor('#3BA55C')
-                .setTitle('🟢 Servidores Online')
-                .setDescription('Os servidores de **Ragnarok Online LATAM** estão online!')
-                .addFields({
-                    name: 'Servidores',
-                    value: '• Freya\n• Nidhogg\n• Yggdrasil',
-                    inline: true
-                });
-        } else {
-            embed
-                .setColor('#ED4245')
-                .setTitle('🔴 Servidores Offline')
-                .setDescription('Os servidores de **Ragnarok Online LATAM** estão offline.')
-                .addFields({
-                    name: 'Servidores Afetados',
-                    value: '• Freya\n• Nidhogg\n• Yggdrasil',
-                    inline: true
-                }, {
-                    name: 'Motivo',
-                    value: reason || 'Desconhecido',
-                    inline: true
-                });
-        }
-        
-        embed.setFooter({ text: 'BeeWiki • Status do Servidor' });
-        
-        await channel.send({ embeds: [embed] });
-        logger.info('Status notification sent', { online, channelId: notificationChannelId });
-        
-    } catch (error) {
-        logger.error('Error sending status notification', { error: error.message });
-    }
-}
-
-/**
- * Forces an immediate check
- * @returns {Promise<Object>} Check results
- */
 async function forceCheck() {
     return await checkServers();
 }
 
-/**
- * Gets current status
- * @returns {Object} Server statuses
- */
 function getStatus() {
-    const statusData = serverStatusStorage.loadStatus();
     return {
         running: !!intervalId,
-        intervalHours: CHECK_INTERVAL_MS / (60 * 60 * 1000),
-        accountServer: `${ACCOUNT_SERVER.host}:${ACCOUNT_SERVER.port}`,
+        intervalMinutes: CHECK_INTERVAL_MS / 60000,
         servers: serverStatusStorage.getServerStatus(),
-        lastUpdated: statusData.lastUpdated
+        lastCheck: lastResults,
+        lastUpdated: serverStatusStorage.loadStatus().lastUpdated
     };
 }
 
-/**
- * Sets the notification channel
- * @param {string} channelId - Discord channel ID
- */
 function setNotificationChannel(channelId) {
     notificationChannelId = channelId;
     logger.info('Notification channel set', { channelId });
 }
 
 module.exports = {
+    SERVERS,
     initialize,
     start,
     stop,
@@ -274,7 +245,8 @@ module.exports = {
     forceCheck,
     getStatus,
     setNotificationChannel,
-    // For compatibility
+    probeServer,
+    // Compat
     checkServer: checkServers,
     checkAllServers: checkServers
 };

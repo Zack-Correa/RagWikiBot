@@ -83,6 +83,11 @@ function showSection(sectionId) {
     
     currentSection = sectionId;
     window.location.hash = sectionId;
+
+    // Lazy-load server section data
+    if (sectionId === 'servers') {
+        loadServerData();
+    }
 }
 
 // Dashboard
@@ -3539,6 +3544,197 @@ async function removeAccountPermission(permId) {
     }
 }
 
+// ==================== SERVERS & PLAYER COUNTS ====================
+
+let playerCountChart = null;
+
+function initServers() {
+    // Load when section becomes visible
+}
+
+async function loadServerData() {
+    try {
+        // Load server status + player counts + stats in parallel
+        const [statusRes, playerRes, statsRes] = await Promise.all([
+            fetch('/api/server-status').then(r => r.json()).catch(() => null),
+            fetch('/api/player-count').then(r => r.json()).catch(() => null),
+            fetch('/api/player-count/stats?days=30').then(r => r.json()).catch(() => null)
+        ]);
+
+        // Update stat cards
+        if (playerRes?.data) {
+            document.getElementById('srv-total-players').textContent =
+                playerRes.data.totalPlayers?.toLocaleString('pt-BR') || '—';
+        }
+
+        if (statsRes?.data?.stats) {
+            const stats = statsRes.data.stats;
+            document.getElementById('srv-total-captures').textContent =
+                (stats.totalCaptures || 0).toLocaleString('pt-BR');
+            document.getElementById('srv-peak-players').textContent =
+                stats.peak ? stats.peak.total.toLocaleString('pt-BR') : '—';
+        }
+
+        // Server status table
+        if (statusRes?.data) {
+            const servers = statusRes.data.servers || {};
+            let onlineCount = 0;
+            const rows = [];
+
+            for (const [key, srv] of Object.entries(servers)) {
+                const isOnline = srv.online === true;
+                if (isOnline) onlineCount++;
+
+                const icon = isOnline ? '🟢' : srv.online === false ? '🔴' : '⚪';
+                const latency = srv.responseTimeMs != null ? `${srv.responseTimeMs}ms` : '—';
+                const lastCheck = srv.lastCheck ? new Date(srv.lastCheck).toLocaleString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit'
+                }) : '—';
+
+                // Get player count for this server
+                const pc = playerRes?.data?.servers?.find(s => s.key === key);
+                const players = pc ? pc.playerCount.toLocaleString('pt-BR') : '—';
+
+                rows.push(`<tr>
+                    <td><strong>${key}</strong></td>
+                    <td>${icon} ${isOnline ? 'Online' : srv.online === false ? 'Offline' : '?'}</td>
+                    <td>${latency}</td>
+                    <td>${players}</td>
+                    <td>${lastCheck}</td>
+                </tr>`);
+            }
+
+            document.getElementById('server-status-table').innerHTML = rows.join('') || '<tr><td colspan="5">Sem dados</td></tr>';
+            document.getElementById('srv-servers-online').textContent = `${onlineCount}/${Object.keys(servers).length}`;
+        }
+
+        // Daily stats table
+        if (statsRes?.data?.daily) {
+            const daily = statsRes.data.daily;
+            const dates = Object.keys(daily).sort().reverse();
+            const rows = dates.map(date => {
+                const d = daily[date];
+                return `<tr>
+                    <td>${date}</td>
+                    <td>${d.captures || 0}</td>
+                    <td>${d.avgTotal?.toLocaleString('pt-BR') || '—'}</td>
+                    <td>${d.peak?.total?.toLocaleString('pt-BR') || '—'}</td>
+                    <td>${d.low?.total != null && d.low.total !== Infinity ? d.low.total.toLocaleString('pt-BR') : '—'}</td>
+                </tr>`;
+            });
+            document.getElementById('daily-stats-table').innerHTML = rows.join('') || '<tr><td colspan="5">Sem dados</td></tr>';
+        }
+
+        // Load default chart
+        loadPlayerChart(24);
+    } catch (error) {
+        console.error('Error loading server data:', error);
+    }
+}
+
+async function loadPlayerChart(hours = 24) {
+    try {
+        const res = await fetch(`/api/player-count/history?hours=${hours}`);
+        const json = await res.json();
+        if (!json.success || !json.data?.history?.length) return;
+
+        const history = json.data.history.reverse(); // oldest first
+        const labels = history.map(h => {
+            const d = new Date(h.t);
+            return d.toLocaleString('pt-BR', {
+                timeZone: 'America/Sao_Paulo',
+                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+            });
+        });
+
+        const datasets = [];
+        const colors = {
+            FREYA: { border: '#5865F2', bg: 'rgba(88,101,242,0.1)' },
+            NIDHOGG: { border: '#ED4245', bg: 'rgba(237,66,69,0.1)' },
+            YGGDRASIL: { border: '#3BA55C', bg: 'rgba(59,165,92,0.1)' },
+            total: { border: '#F5A623', bg: 'rgba(245,166,35,0.15)' }
+        };
+
+        // Individual server lines
+        for (const key of ['FREYA', 'NIDHOGG', 'YGGDRASIL']) {
+            const data = history.map(h => h[key] ?? null);
+            if (data.some(v => v != null)) {
+                datasets.push({
+                    label: key,
+                    data,
+                    borderColor: colors[key].border,
+                    backgroundColor: colors[key].bg,
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 2
+                });
+            }
+        }
+
+        // Total line
+        datasets.push({
+            label: 'Total',
+            data: history.map(h => h.total ?? null),
+            borderColor: colors.total.border,
+            backgroundColor: colors.total.bg,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2,
+            borderDash: [5, 5]
+        });
+
+        const ctx = document.getElementById('player-count-chart').getContext('2d');
+
+        if (playerCountChart) playerCountChart.destroy();
+
+        playerCountChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toLocaleString('pt-BR') || '—'}`
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { callback: v => v.toLocaleString('pt-BR') }
+                    },
+                    x: {
+                        ticks: { maxTicksLimit: 12 }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error loading player chart:', error);
+    }
+}
+
+async function forceServerCheck() {
+    try {
+        showToast('Verificando servidores...', 'info');
+        const res = await fetch('/api/server-status/check', { method: 'POST' });
+        const json = await res.json();
+        if (json.success) {
+            showToast('Verificação concluída!', 'success');
+            loadServerData();
+        } else {
+            showToast('Erro na verificação', 'error');
+        }
+    } catch (error) {
+        showToast('Erro na verificação', 'error');
+    }
+}
+
 // Make functions available globally
 window.deleteAlert = deleteAlert;
 window.removeFromWhitelist = removeFromWhitelist;
@@ -3554,3 +3750,5 @@ window.reloadPlugin = reloadPlugin;
 window.openEditAccount = openEditAccount;
 window.closeEditAccount = closeEditAccount;
 window.removeAccountPermission = removeAccountPermission;
+window.loadPlayerChart = loadPlayerChart;
+window.forceServerCheck = forceServerCheck;

@@ -8,6 +8,7 @@ const InteractionHandler = require('./handlers/interactionHandler');
 const pluginService = require('./services/pluginService');
 const errorAlertService = require('./services/errorAlertService');
 const playerCountService = require('./services/playerCountService');
+const serverStatusService = require('./services/serverStatusService');
 const webServer = require('./web/server');
 const config = require('./config');
 const logger = require('./utils/logger');
@@ -60,6 +61,11 @@ const handleReady = () => {
     // Start player count monitoring service
     playerCountService.start();
     logger.info('Player count service started');
+
+    // Start server status monitoring (TCP probes every 5 min)
+    serverStatusService.initialize(client, process.env.STATUS_CHANNEL_ID || null);
+    serverStatusService.start();
+    logger.info('Server status service started');
 
     // Start admin web panel if password is configured
     const adminPort = process.env.ADMIN_PORT || 3000;
