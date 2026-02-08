@@ -4,8 +4,14 @@
  * 
  * Architecture:
  *   Windows (ragexe.exe) --[hosts redirect]--> Linux (this proxy) --> Real GNJoy server
- *   The proxy captures packet 0x0825 (CA_SSO_LOGIN_REQ, 417 bytes) in transit,
- *   extracts the Base64 token, saves it to .env, and forwards everything untouched.
+ * 
+ * The client connects to multiple ports on lt-account-01.gnjoylatam.com:
+ *   - Port 6951: TokenAgency / OTP server (client connects here FIRST)
+ *   - Port 6900: Account server (SSO login with 0x0825 packet)
+ * 
+ * Since the hosts file redirects ALL traffic for that hostname to Linux,
+ * the proxy must listen on BOTH ports and forward transparently.
+ * Token capture (0x0825) only happens on port 6900.
  */
 
 const net = require('net');
@@ -15,13 +21,19 @@ const path = require('path');
 const os = require('os');
 
 const TARGET_HOST = 'lt-account-01.gnjoylatam.com';
-const TARGET_PORT = 6900;
-const SSO_PACKET_ID = 0x0825;
 
+// All ports the game client connects to on this hostname
+const PORTS = {
+    ACCOUNT: 6900,       // SSO login — packet 0x0825 is captured here
+    TOKEN_AGENCY: 6951,  // TokenAgency / OTP — must forward or client fails
+};
+
+const SSO_PACKET_ID = 0x0825;
 const TOKEN_OFFSET = 92;
 const TOKEN_LENGTH = 325;
 
 let logger = console;
+let _onTokenCaptured = null;
 
 function setLogger(l) {
     logger = l;
@@ -66,7 +78,6 @@ function extractUsernameFromPacket(packet) {
 // ============================================================
 
 function updateEnvToken(token) {
-    // Walk up to project root (plugins/token-capture -> project root)
     const envPath = path.join(__dirname, '..', '..', '.env');
 
     if (!fs.existsSync(envPath)) {
@@ -95,51 +106,126 @@ function updateEnvToken(token) {
 }
 
 // ============================================================
-// Transparent TCP Proxy
+// Generic TCP forwarder (transparent, no inspection)
 // ============================================================
 
-class TransparentProxy {
-    constructor(options = {}) {
-        this.listenPort = options.listenPort || TARGET_PORT;
-        this.listenHost = options.listenHost || '0.0.0.0';
+function createForwarder(listenPort, targetIp, targetPort, label) {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer((clientSocket) => {
+            const clientAddr = `${clientSocket.remoteAddress}:${clientSocket.remotePort}`;
+            logger.info(`${label}: New connection from ${clientAddr}`);
+
+            let serverConnected = false;
+            let pending = [];
+
+            const serverSocket = net.createConnection(targetPort, targetIp);
+
+            serverSocket.on('connect', () => {
+                serverConnected = true;
+                logger.info(`${label}: Connected to real server ${targetIp}:${targetPort}`);
+                for (const chunk of pending) serverSocket.write(chunk);
+                pending = [];
+            });
+
+            clientSocket.on('data', (data) => {
+                if (serverConnected) {
+                    serverSocket.write(data);
+                } else {
+                    pending.push(data);
+                }
+            });
+
+            serverSocket.on('data', (data) => {
+                clientSocket.write(data);
+            });
+
+            clientSocket.on('close', () => { serverSocket.destroy(); });
+            serverSocket.on('close', () => { clientSocket.destroy(); });
+            clientSocket.on('error', (err) => {
+                logger.warn(`${label}: Client error`, { error: err.message });
+                serverSocket.destroy();
+            });
+            serverSocket.on('error', (err) => {
+                logger.warn(`${label}: Server error`, { error: err.message });
+                clientSocket.destroy();
+            });
+        });
+
+        server.on('error', (err) => {
+            logger.error(`${label}: Listen error on port ${listenPort}`, { error: err.message });
+            reject(err);
+        });
+
+        server.listen(listenPort, '0.0.0.0', () => {
+            logger.info(`${label}: Forwarding 0.0.0.0:${listenPort} -> ${targetIp}:${targetPort}`);
+            resolve(server);
+        });
+    });
+}
+
+// ============================================================
+// Main Proxy (port 6900 — with token capture)
+// ============================================================
+
+class TokenCaptureProxy {
+    constructor() {
+        this.listenHost = '0.0.0.0';
         this.targetIp = null;
-        this.server = null;
+        this.servers = [];           // All TCP servers (account + forwarders)
         this.isRunning = false;
         this.lastToken = null;
         this.lastTokenTime = null;
         this.lastUsername = null;
         this.connections = 0;
         this.tokensCaptured = 0;
-        this.onTokenCaptured = null;
+        this.listeningPorts = [];
     }
 
     async start() {
         this.targetIp = await this._resolveTargetIp();
         logger.info(`Token capture: Resolved ${TARGET_HOST} -> ${this.targetIp}`);
 
+        // 1. Start the main account server proxy (port 6900) with token capture
+        const accountServer = await this._startAccountProxy();
+        this.servers.push(accountServer);
+        this.listeningPorts.push(PORTS.ACCOUNT);
+
+        // 2. Start transparent forwarders for other ports the client uses
+        const otherPorts = [PORTS.TOKEN_AGENCY];
+        for (const port of otherPorts) {
+            try {
+                const fwd = await createForwarder(
+                    port, this.targetIp, port,
+                    `Token capture [fwd:${port}]`
+                );
+                this.servers.push(fwd);
+                this.listeningPorts.push(port);
+            } catch (err) {
+                // Non-fatal: log and continue (the main port 6900 is what matters)
+                logger.warn(`Token capture: Could not listen on port ${port}: ${err.message}`);
+            }
+        }
+
+        this.isRunning = true;
+        logger.info(`Token capture: Proxy ready on ports [${this.listeningPorts.join(', ')}]`);
+        logger.info(`Token capture: Configure Windows hosts: ${this._getLocalIp()}  ${TARGET_HOST}`);
+    }
+
+    _startAccountProxy() {
         return new Promise((resolve, reject) => {
-            this.server = net.createServer((clientSocket) => {
+            const server = net.createServer((clientSocket) => {
                 this._handleConnection(clientSocket);
             });
 
-            this.server.on('error', (err) => {
-                if (err.code === 'EADDRINUSE' && this.listenPort === TARGET_PORT) {
-                    logger.warn(`Token capture: Port ${TARGET_PORT} in use, trying ${TARGET_PORT + 10000}`);
-                    this.listenPort = TARGET_PORT + 10000;
-                    this.server.listen(this.listenPort, this.listenHost);
-                    return;
-                }
-                logger.error('Token capture: Server error', { error: err.message });
-                this.isRunning = false;
+            server.on('error', (err) => {
+                logger.error(`Token capture: Account proxy error on port ${PORTS.ACCOUNT}`, { error: err.message });
                 reject(err);
             });
 
-            this.server.listen(this.listenPort, this.listenHost, () => {
-                this.isRunning = true;
-                logger.info(`Token capture: Proxy listening on ${this.listenHost}:${this.listenPort}`);
-                logger.info(`Token capture: Forwarding to ${this.targetIp}:${TARGET_PORT}`);
-                logger.info(`Token capture: Configure Windows hosts: ${this._getLocalIp()}  ${TARGET_HOST}`);
-                resolve();
+            server.listen(PORTS.ACCOUNT, this.listenHost, () => {
+                logger.info(`Token capture: Account proxy listening on ${this.listenHost}:${PORTS.ACCOUNT}`);
+                logger.info(`Token capture: Forwarding to ${this.targetIp}:${PORTS.ACCOUNT}`);
+                resolve(server);
             });
         });
     }
@@ -149,9 +235,23 @@ class TransparentProxy {
         const clientAddr = `${clientSocket.remoteAddress}:${clientSocket.remotePort}`;
         logger.info(`Token capture: New connection from ${clientAddr} (#${this.connections})`);
 
-        const serverSocket = net.createConnection(TARGET_PORT, this.targetIp);
+        let serverConnected = false;
+        let pendingClientData = [];
         let clientBuffer = Buffer.alloc(0);
 
+        const serverSocket = net.createConnection(PORTS.ACCOUNT, this.targetIp);
+
+        serverSocket.on('connect', () => {
+            serverConnected = true;
+            logger.info(`Token capture: Connected to real server ${this.targetIp}:${PORTS.ACCOUNT} for ${clientAddr}`);
+
+            for (const chunk of pendingClientData) {
+                serverSocket.write(chunk);
+            }
+            pendingClientData = [];
+        });
+
+        // Client -> Server (capture outgoing packets)
         clientSocket.on('data', (data) => {
             clientBuffer = Buffer.concat([clientBuffer, data]);
 
@@ -172,33 +272,40 @@ class TransparentProxy {
 
                 updateEnvToken(token);
 
-                if (this.onTokenCaptured) {
-                    try { this.onTokenCaptured(token, username); } catch (e) { /* ignore */ }
+                if (_onTokenCaptured) {
+                    try { _onTokenCaptured(token, username); } catch (e) { /* ignore */ }
                 }
 
                 clientBuffer = Buffer.alloc(0);
             }
 
-            serverSocket.write(data);
+            if (serverConnected) {
+                serverSocket.write(data);
+            } else {
+                pendingClientData.push(data);
+            }
         });
 
+        // Server -> Client (forward responses transparently)
         serverSocket.on('data', (data) => {
             clientSocket.write(data);
         });
 
+        // Cleanup
         clientSocket.on('close', () => {
-            logger.debug(`Token capture: Client ${clientAddr} disconnected`);
+            logger.info(`Token capture: Client ${clientAddr} disconnected`);
             serverSocket.destroy();
         });
         serverSocket.on('close', () => {
+            logger.info(`Token capture: Server connection closed for ${clientAddr}`);
             clientSocket.destroy();
         });
         clientSocket.on('error', (err) => {
-            logger.debug('Token capture: Client error', { error: err.message });
+            logger.warn(`Token capture: Client error (${clientAddr})`, { error: err.message });
             serverSocket.destroy();
         });
         serverSocket.on('error', (err) => {
-            logger.debug('Token capture: Server error', { error: err.message });
+            logger.warn(`Token capture: Server connection error for ${clientAddr}`, { error: err.message });
             clientSocket.destroy();
         });
     }
@@ -230,12 +337,13 @@ class TransparentProxy {
     }
 
     stop() {
-        if (this.server) {
-            this.server.close();
-            this.server = null;
-            this.isRunning = false;
-            logger.info('Token capture: Proxy stopped');
+        for (const server of this.servers) {
+            try { server.close(); } catch (e) { /* ignore */ }
         }
+        this.servers = [];
+        this.listeningPorts = [];
+        this.isRunning = false;
+        logger.info('Token capture: All proxies stopped');
     }
 
     getStatus() {
@@ -243,10 +351,9 @@ class TransparentProxy {
             running: this.isRunning,
             method: 'transparent_proxy',
             listenHost: this.listenHost,
-            listenPort: this.listenPort,
+            listeningPorts: this.listeningPorts,
             localIp: this._getLocalIp(),
             targetHost: TARGET_HOST,
-            targetPort: TARGET_PORT,
             targetIp: this.targetIp,
             connections: this.connections,
             tokensCaptured: this.tokensCaptured,
@@ -272,7 +379,7 @@ async function startCapture(options = {}) {
         stopCapture();
     }
 
-    instance = new TransparentProxy(options);
+    instance = new TokenCaptureProxy();
 
     try {
         await instance.start();
@@ -296,10 +403,13 @@ function getStatus() {
     return instance.getStatus();
 }
 
+/**
+ * Register a callback for when a token is captured.
+ * Can be called before or after startCapture.
+ * @param {Function} callback - (token, username) => void
+ */
 function onCapture(callback) {
-    if (instance) {
-        instance.onTokenCaptured = callback;
-    }
+    _onTokenCaptured = callback;
 }
 
 function getToken() {

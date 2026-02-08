@@ -53,12 +53,12 @@ async function execute(interaction) {
                 .addFields(
                     {
                         name: 'Proxy',
-                        value: `\`${status.localIp}:${status.listenPort}\``,
+                        value: `\`${status.localIp}\` portas: \`${(status.listeningPorts || []).join(', ')}\``,
                         inline: true
                     },
                     {
                         name: 'Servidor Real',
-                        value: `\`${status.targetIp}:${status.targetPort}\``,
+                        value: `\`${status.targetIp}\` (${status.targetHost})`,
                         inline: true
                     },
                     {
@@ -110,11 +110,11 @@ async function execute(interaction) {
                 )
                 .setTimestamp();
 
-            if (status.running) {
+                if (status.running) {
                 embed.addFields(
                     {
                         name: 'Proxy',
-                        value: `\`${status.localIp}:${status.listenPort}\``,
+                        value: `\`${status.localIp}\` portas: \`${(status.listeningPorts || []).join(', ')}\``,
                         inline: true
                     },
                     {
