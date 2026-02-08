@@ -4309,16 +4309,37 @@ code.dash-info-value {
     font-family: 'Consolas', 'Monaco', monospace;
 }
 
-.token-metric-value.status-active {
+.token-metric-value .status-active {
     color: #3BA55C;
 }
 
-.token-metric-value.status-expired {
+.token-metric-value .status-expired {
     color: #ED4245;
 }
 
+.token-metric-value .status-unknown,
 .token-metric-value.status-unknown {
     color: #888;
+}
+
+.token-metric-wide {
+    grid-column: span 2;
+}
+
+.token-metric-small {
+    font-size: 13px !important;
+    word-break: break-all;
+}
+
+.token-hash {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.05);
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
 }
 
 /* Responsive adjustments */

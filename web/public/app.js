@@ -3821,17 +3821,21 @@ async function loadTokenMetrics() {
             // Current token info
             if (cur) {
                 const statusEl = document.getElementById('tm-current-status');
-                const statusMap = { active: '● Ativo', expired: '● Expirado', unknown: '● ?' };
-                statusEl.textContent = statusMap[cur.status] || cur.status;
-                statusEl.className = `token-metric-value status-${cur.status}`;
+                const statusDot = cur.status === 'active' ? '●' : cur.status === 'expired' ? '●' : '○';
+                const statusLabel = cur.status === 'active' ? 'Ativo' : cur.status === 'expired' ? 'Expirado' : '?';
+                statusEl.innerHTML = `<span class="status-${cur.status}">${statusDot} ${statusLabel}</span>` +
+                    (cur.token ? `<br><code class="token-hash">${cur.token}</code>` : '');
+                statusEl.className = 'token-metric-value';
 
                 document.getElementById('tm-current-age').textContent = cur.ageHuman || '—';
                 document.getElementById('tm-current-uses').textContent = cur.useCount || '0';
+                document.getElementById('tm-current-user').textContent = cur.username || '—';
             } else {
                 document.getElementById('tm-current-status').textContent = 'Nenhum';
                 document.getElementById('tm-current-status').className = 'token-metric-value status-unknown';
                 document.getElementById('tm-current-age').textContent = '—';
                 document.getElementById('tm-current-uses').textContent = '—';
+                document.getElementById('tm-current-user').textContent = '—';
             }
 
             // TTL stats
