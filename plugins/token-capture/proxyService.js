@@ -317,43 +317,80 @@ class TokenCaptureProxy {
             // Accumulate server data to parse the login response
             serverBuffer = Buffer.concat([serverBuffer, data]);
 
-            // Try to parse GNJoy login accepted response (0x0C32)
-            // This packet contains the server list with player counts!
-            if (serverBuffer.length >= 4) {
-                const packetId = serverBuffer.readUInt16LE(0);
-                const packetLen = serverBuffer.readUInt16LE(2);
+            logger.info(`Token capture: Server -> Client ${data.length} bytes (buffer: ${serverBuffer.length} bytes)`, {
+                hex: serverBuffer.slice(0, Math.min(40, serverBuffer.length)).toString('hex')
+            });
 
-                // Only attempt parse once we have the full packet
-                if (serverBuffer.length >= packetLen && packetLen > 0) {
-                    const parsed = roProtocol.parseGNJoyLoginAccepted(serverBuffer);
-                    if (parsed && parsed.servers && parsed.servers.length > 0) {
+            // Need at least 4 bytes for packet header
+            if (serverBuffer.length < 4) return;
+
+            const packetId = serverBuffer.readUInt16LE(0);
+            const packetLen = serverBuffer.readUInt16LE(2);
+
+            logger.info(`Token capture: Packet 0x${packetId.toString(16).padStart(4, '0')}, declared length: ${packetLen}, buffered: ${serverBuffer.length}`);
+
+            // For variable-length packets, wait for full data
+            if (packetLen > 0 && serverBuffer.length < packetLen) {
+                logger.info(`Token capture: Waiting for more data (${serverBuffer.length}/${packetLen})`);
+                return;
+            }
+
+            // Try to parse GNJoy login accepted (0x0C32)
+            const parsed = roProtocol.parseGNJoyLoginAccepted(serverBuffer);
+            if (parsed && parsed.servers && parsed.servers.length > 0) {
+                logger.info('='.repeat(45));
+                logger.info('Token capture: SERVER LIST CAPTURED!');
+                for (const srv of parsed.servers) {
+                    logger.info(`  ${srv.name}: ${srv.playerCount} players (${srv.url || srv.ip || 'no url'})`);
+                }
+                logger.info('='.repeat(45));
+
+                playerCountStore.record(parsed.servers);
+                this.lastServerList = parsed.servers;
+                this.lastServerListTime = new Date().toISOString();
+            } else if (parsed && parsed.servers && parsed.servers.length === 0) {
+                // 0x0C32 recognized but no entries parsed
+                logger.warn('Token capture: 0x0C32 packet received but 0 server entries parsed', {
+                    packetLen,
+                    bufferLen: serverBuffer.length,
+                    hex: serverBuffer.slice(0, Math.min(200, serverBuffer.length)).toString('hex')
+                });
+            } else {
+                // Try login refused
+                const errorInfo = roProtocol.parseLoginRefused(serverBuffer);
+                if (errorInfo) {
+                    logger.warn('Token capture: Server login refused', {
+                        packetId: `0x${packetId.toString(16).padStart(4, '0')}`,
+                        errorCode: errorInfo.errorCode,
+                        reason: roProtocol.getRefuseReason(errorInfo.errorCode)
+                    });
+                } else {
+                    // Try standard login accepted (0x0069, 0x0AC4)
+                    const stdParsed = roProtocol.parseLoginAccepted(serverBuffer);
+                    if (stdParsed && stdParsed.servers && stdParsed.servers.length > 0) {
                         logger.info('='.repeat(45));
-                        logger.info('Token capture: SERVER LIST CAPTURED!');
-                        for (const srv of parsed.servers) {
+                        logger.info('Token capture: SERVER LIST CAPTURED (standard format)!');
+                        const normalized = stdParsed.servers.map(s => ({
+                            name: s.name,
+                            playerCount: s.userCount || 0,
+                            ip: s.ip,
+                            port: s.port
+                        }));
+                        for (const srv of normalized) {
                             logger.info(`  ${srv.name}: ${srv.playerCount} players`);
                         }
                         logger.info('='.repeat(45));
 
-                        // Save player counts directly — no need to re-login later
-                        playerCountStore.record(parsed.servers);
-                        this.lastServerList = parsed.servers;
+                        playerCountStore.record(normalized);
+                        this.lastServerList = normalized;
                         this.lastServerListTime = new Date().toISOString();
                     } else {
-                        // Could be a login refused or other packet
-                        const errorInfo = roProtocol.parseLoginRefused(serverBuffer);
-                        if (errorInfo) {
-                            logger.warn(`Token capture: Server responded with login refused`, {
-                                packetId: `0x${packetId.toString(16).padStart(4, '0')}`,
-                                errorCode: errorInfo.errorCode,
-                                reason: roProtocol.getRefuseReason(errorInfo.errorCode)
-                            });
-                        } else {
-                            logger.debug(`Token capture: Server sent packet 0x${packetId.toString(16).padStart(4, '0')} (${serverBuffer.length} bytes)`);
-                        }
+                        logger.info(`Token capture: Server packet 0x${packetId.toString(16).padStart(4, '0')} not a login response (${serverBuffer.length} bytes)`);
                     }
-                    serverBuffer = Buffer.alloc(0);
                 }
             }
+
+            serverBuffer = Buffer.alloc(0);
         });
 
         // Cleanup

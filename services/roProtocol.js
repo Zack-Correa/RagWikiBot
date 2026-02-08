@@ -294,69 +294,119 @@ function parseGNJoyLoginAccepted(data) {
         // Header: ID(2) + Length(2) + AuthCode(4) + AccountID(4) + ... = 67 bytes
         const headerSize = 67;
         const entrySize = 165;
-        
+
+        if (data.length < headerSize) {
+            logger.warn('GNJoy parse: packet too short for header', { length: data.length, headerSize });
+            return null;
+        }
+
         const authCode = data.readUInt32LE(4);
         const accountId = data.readUInt32LE(8);
 
-        // Parse server entries
+        const dataRegion = Math.min(data.length, packetLength);
+        const numEntries = Math.floor((dataRegion - headerSize) / entrySize);
+
+        logger.debug('GNJoy parse: header OK', {
+            packetLength,
+            dataLength: data.length,
+            headerSize,
+            entrySize,
+            numEntries
+        });
+
         const servers = [];
-        let offset = headerSize;
 
-        // Find entries by searching for port pattern (0x1194 = 4500)
-        const portPattern = Buffer.from([0x94, 0x11]);
-        let searchIdx = headerSize;
+        for (let i = 0; i < numEntries; i++) {
+            const entryStart = headerSize + (i * entrySize);
+            if (entryStart + entrySize > dataRegion) break;
 
-        while (searchIdx + entrySize <= data.length && searchIdx + entrySize <= packetLength) {
-            // Look for port pattern
-            const portIdx = data.indexOf(portPattern, searchIdx);
-            if (portIdx === -1 || portIdx >= packetLength) break;
+            // Entry layout (165 bytes):
+            //   [0-1]   padding/flags
+            //   [2-3]   port (LE16)
+            //   [4-23]  server name (20 bytes, null-terminated)
+            //   [24-25] player count (LE16)
+            //   ... remaining bytes include URL, etc.
+            const port = data.readUInt16LE(entryStart + 2);
+            const nameStart = entryStart + 4;
+            const nameRaw = data.slice(nameStart, nameStart + 20);
+            const nullIdx = nameRaw.indexOf(0);
+            const serverName = nameRaw.toString('ascii', 0, nullIdx >= 0 ? nullIdx : 20).trim();
 
-            // Entry starts 2 bytes before the port (padding)
-            const entryStart = portIdx - 2;
-            if (entryStart < searchIdx) {
-                searchIdx = portIdx + 1;
-                continue;
-            }
+            const playerCount = data.readUInt16LE(entryStart + 24);
 
-            // Read server name (20 bytes after port)
-            const nameStart = portIdx + 2;
-            const nameEnd = data.indexOf(0, nameStart);
-            const serverName = data.slice(nameStart, nameEnd >= nameStart ? nameEnd : nameStart + 20).toString('ascii');
-
-            // Player count (2 bytes at nameStart + 20)
-            const playerCount = data.readUInt16LE(nameStart + 20);
-
-            // URL (starts after name + padding)
-            const urlStart = data.indexOf(Buffer.from('lt-'), nameStart);
+            // Search for URL pattern "lt-" within this entry
+            const entryEnd = entryStart + entrySize;
+            const urlMarker = Buffer.from('lt-');
+            const urlStart = data.indexOf(urlMarker, nameStart + 20);
             let serverUrl = '';
-            if (urlStart >= 0 && urlStart < nameStart + 50) {
-                const urlEnd = data.indexOf(0, urlStart);
-                serverUrl = data.slice(urlStart, urlEnd > urlStart ? urlEnd : urlStart + 50).toString('ascii');
-            }
-
-            // Extract IP and port from URL if available
             let ip = '';
-            let port = 4500;
-            if (serverUrl) {
+
+            if (urlStart >= 0 && urlStart < entryEnd) {
+                const urlEnd = data.indexOf(0, urlStart);
+                serverUrl = data.slice(urlStart, urlEnd > urlStart && urlEnd < entryEnd ? urlEnd : Math.min(urlStart + 60, entryEnd)).toString('ascii').trim();
                 const urlMatch = serverUrl.match(/^([^:]+):(\d+)$/);
                 if (urlMatch) {
                     ip = urlMatch[1];
-                    port = parseInt(urlMatch[2], 10);
                 }
             }
 
-            servers.push({
-                name: serverName,
-                playerCount,
-                ip,
-                port,
-                url: serverUrl,
-                serverType: 0,
-                serverIndex: servers.length
-            });
+            if (serverName) {
+                servers.push({
+                    name: serverName,
+                    playerCount,
+                    ip,
+                    port,
+                    url: serverUrl,
+                    serverType: 0,
+                    serverIndex: servers.length
+                });
 
-            // Move to next entry
-            searchIdx = entryStart + entrySize;
+                logger.debug(`GNJoy parse: entry ${i}`, {
+                    name: serverName,
+                    playerCount,
+                    port,
+                    url: serverUrl || '(none)'
+                });
+            }
+        }
+
+        // If positional parsing found nothing, try heuristic search for server names
+        if (servers.length === 0 && dataRegion > headerSize) {
+            logger.info('GNJoy parse: positional parsing found 0 entries, trying heuristic scan...');
+            const knownNames = ['Freya', 'Nidhogg', 'Yggdrasil', 'FREYA', 'NIDHOGG', 'YGGDRASIL'];
+
+            for (const name of knownNames) {
+                const nameBuffer = Buffer.from(name, 'ascii');
+                let searchStart = headerSize;
+
+                while (searchStart < dataRegion) {
+                    const idx = data.indexOf(nameBuffer, searchStart);
+                    if (idx === -1 || idx >= dataRegion) break;
+
+                    // Try to read player count 20 bytes after name start
+                    const pcOffset = idx + 20;
+                    if (pcOffset + 2 <= dataRegion) {
+                        const playerCount = data.readUInt16LE(pcOffset);
+                        // Sanity check: player count should be reasonable (0-50000)
+                        if (playerCount >= 0 && playerCount < 50000) {
+                            // Avoid duplicates
+                            if (!servers.find(s => s.name === name)) {
+                                servers.push({
+                                    name,
+                                    playerCount,
+                                    ip: '',
+                                    port: 0,
+                                    url: '',
+                                    serverType: 0,
+                                    serverIndex: servers.length
+                                });
+                                logger.info(`GNJoy parse: heuristic found "${name}" with ${playerCount} players at offset ${idx}`);
+                            }
+                        }
+                    }
+                    searchStart = idx + name.length;
+                }
+            }
         }
 
         return {
