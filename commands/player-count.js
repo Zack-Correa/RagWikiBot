@@ -103,8 +103,9 @@ async function sendPlayerCounts(interaction, result) {
         }
 
         // Strategy info
-        const strategyText = result.strategy === 'sso' ? '🔐 SSO (GNJoy)' : 
-                            result.strategy === 'login' ? '🔑 Login' : '📡 Probe';
+        const strategyText = result.strategy === 'sso' ? 
+            (result.tokenSource === 'launcher_auto' ? '🔐 SSO (Auto)' : '🔐 SSO (Manual)') :
+            result.strategy === 'login' ? '🔑 Login' : '📡 Probe';
         embed.addFields({
             name: '📊 Informações',
             value: `Método: ${strategyText} • Tempo: ${result.responseTime || result.elapsed || '?'}ms`,
@@ -151,19 +152,28 @@ async function sendPlayerCounts(interaction, result) {
         embed.addFields({
             name: '💡 Como Habilitar',
             value: [
-                '**Método 1 (Recomendado - GNJoy LATAM):**',
-                '1. Capture o pacote de login (0x0825) no Wireshark',
+                '**Método Automático (Tentativa):**',
+                'Configure no `.env`:',
+                '```',
+                'RO_PROBE_USERNAME=seu_email@email.com',
+                'RO_PROBE_PASSWORD=sua_senha',
+                'RO_PROBE_TOTP_SECRET=seu_secret_totp  # Opcional, se tiver 2FA',
+                '```',
+                '',
+                '⚠️ O bot tentará obter o token do jogo automaticamente.',
+                '⚠️ Se não funcionar, você precisará usar o método manual abaixo.',
+                '',
+                '**Método Manual (Recomendado):**',
+                'Capture o token do jogo via Wireshark:',
+                '1. Capture o pacote de login (0x0825) do launcher',
                 '2. Execute: `node extract-token.js <hex_dump>`',
-                '3. Adicione no `.env`:',
+                '3. Configure no `.env`:',
                 '```',
                 'RO_PROBE_USERNAME=seu_email@email.com',
                 'RO_AUTH_TOKEN=<token_extraido>',
                 '```',
                 '',
-                '**Método 2 (Fallback):**',
-                'Configure `RO_PROBE_USERNAME` e `RO_PROBE_PASSWORD` no `.env`',
-                '',
-                '⚠️ O token expira periodicamente. Re-extraia quando necessário.'
+                '💡 O token expira periodicamente. Re-extraia quando necessário.'
             ].join('\n'),
             inline: false
         });
