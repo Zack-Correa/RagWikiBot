@@ -57,7 +57,7 @@ function ensureDir() {
 
 function truncateToken(token) {
     if (!token) return '?';
-    return token.substring(0, 8) + '...';
+    return token; // Full token — admin panel is password-protected
 }
 
 function msToHuman(ms) {

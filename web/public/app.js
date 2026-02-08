@@ -3824,7 +3824,7 @@ async function loadTokenMetrics() {
                 const statusDot = cur.status === 'active' ? '●' : cur.status === 'expired' ? '●' : '○';
                 const statusLabel = cur.status === 'active' ? 'Ativo' : cur.status === 'expired' ? 'Expirado' : '?';
                 statusEl.innerHTML = `<span class="status-${cur.status}">${statusDot} ${statusLabel}</span>` +
-                    (cur.token ? `<br><code class="token-hash">${cur.token}</code>` : '');
+                    (cur.token ? `<code class="token-hash" title="Clique para copiar" onclick="copyToken(this)">${cur.token}</code>` : '');
                 statusEl.className = 'token-metric-value';
 
                 document.getElementById('tm-current-age').textContent = cur.ageHuman || '—';
@@ -3934,3 +3934,17 @@ window.removeAccountPermission = removeAccountPermission;
 window.loadPlayerChart = loadPlayerChart;
 window.forceServerCheck = forceServerCheck;
 window.forcePlayerCheck = forcePlayerCheck;
+window.copyToken = function(el) {
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        showToast('Token copiado!', 'success');
+    }).catch(() => {
+        // Fallback
+        const range = document.createRange();
+        range.selectNode(el);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+        showToast('Token copiado!', 'success');
+    });
+};

@@ -4332,14 +4332,24 @@ code.dash-info-value {
 }
 
 .token-hash {
-    display: inline-block;
-    margin-top: 4px;
-    font-size: 11px;
+    display: block;
+    margin-top: 6px;
+    font-size: 10px;
     color: var(--text-muted);
     background: rgba(255,255,255,0.05);
-    padding: 2px 8px;
+    padding: 4px 8px;
     border-radius: 4px;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
+    word-break: break-all;
+    max-height: 60px;
+    overflow-y: auto;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+}
+
+.token-hash:hover {
+    background: rgba(255,255,255,0.1);
 }
 
 /* Responsive adjustments */
