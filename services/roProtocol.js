@@ -291,8 +291,8 @@ function parseGNJoyLoginAccepted(data) {
     }
 
     try {
-        // Header: ID(2) + Length(2) + AuthCode(4) + AccountID(4) + ... = 67 bytes
-        const headerSize = 67;
+        // Header: ID(2) + Length(2) + AuthCode(4) + AccountID(4) + padding/session = 64 bytes
+        const headerSize = 64;
         const entrySize = 165;
 
         if (data.length < headerSize) {
@@ -320,24 +320,30 @@ function parseGNJoyLoginAccepted(data) {
             const entryStart = headerSize + (i * entrySize);
             if (entryStart + entrySize > dataRegion) break;
 
-            // Entry layout (165 bytes):
-            //   [0-1]   padding/flags
-            //   [2-3]   port (LE16)
-            //   [4-23]  server name (20 bytes, null-terminated)
-            //   [24-25] player count (LE16)
-            //   ... remaining bytes include URL, etc.
-            const port = data.readUInt16LE(entryStart + 2);
-            const nameStart = entryStart + 4;
+            // Entry layout (165 bytes) — same as CHAR_SERVER_INFO but extended:
+            //   [0-3]   IP address (4 bytes, often 0.0.0.0 when URL is used)
+            //   [4-5]   port (LE16, e.g. 4500)
+            //   [6-25]  server name (20 bytes, null-terminated)
+            //   [26-27] player count (LE16)
+            //   [28-29] server type (LE16)
+            //   [30-31] server index (LE16)
+            //   [32+]   URL string + padding (e.g. "lt-world-1.gnjoylatam.com:4500")
+            const port = data.readUInt16LE(entryStart + 4);
+            const nameStart = entryStart + 6;
             const nameRaw = data.slice(nameStart, nameStart + 20);
             const nullIdx = nameRaw.indexOf(0);
             const serverName = nameRaw.toString('ascii', 0, nullIdx >= 0 ? nullIdx : 20).trim();
 
-            const playerCount = data.readUInt16LE(entryStart + 24);
+            const playerCount = data.readUInt16LE(entryStart + 26);
 
-            // Search for URL pattern "lt-" within this entry
+            const serverType = data.readUInt16LE(entryStart + 28);
+            const serverIndex = data.readUInt16LE(entryStart + 30);
+
+            // Search for URL pattern "lt-" in the extended part of the entry (offset 32+)
             const entryEnd = entryStart + entrySize;
+            const urlSearchStart = entryStart + 32;
             const urlMarker = Buffer.from('lt-');
-            const urlStart = data.indexOf(urlMarker, nameStart + 20);
+            const urlStart = data.indexOf(urlMarker, urlSearchStart);
             let serverUrl = '';
             let ip = '';
 
@@ -357,14 +363,16 @@ function parseGNJoyLoginAccepted(data) {
                     ip,
                     port,
                     url: serverUrl,
-                    serverType: 0,
-                    serverIndex: servers.length
+                    serverType,
+                    serverIndex
                 });
 
                 logger.debug(`GNJoy parse: entry ${i}`, {
                     name: serverName,
                     playerCount,
                     port,
+                    serverType,
+                    serverIndex,
                     url: serverUrl || '(none)'
                 });
             }
