@@ -19,6 +19,8 @@ const dns = require('dns');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const roProtocol = require('../../services/roProtocol');
+const playerCountStore = require('../../utils/playerCountStore');
 
 const TARGET_HOST = 'lt-account-01.gnjoylatam.com';
 
@@ -77,7 +79,7 @@ function extractUsernameFromPacket(packet) {
 // .env persistence
 // ============================================================
 
-function updateEnvToken(token) {
+function updateEnvToken(token, username) {
     const envPath = path.join(__dirname, '..', '..', '.env');
 
     if (!fs.existsSync(envPath)) {
@@ -88,22 +90,38 @@ function updateEnvToken(token) {
     try {
         let content = fs.readFileSync(envPath, 'utf8');
 
+        // Update RO_AUTH_TOKEN
         if (content.includes('RO_AUTH_TOKEN=')) {
             content = content.replace(/RO_AUTH_TOKEN=.*/, `RO_AUTH_TOKEN=${token}`);
         } else {
             content += `\nRO_AUTH_TOKEN=${token}\n`;
         }
 
+        // Update RO_PROBE_USERNAME to match the captured token's owner
+        if (username) {
+            if (content.includes('RO_PROBE_USERNAME=')) {
+                content = content.replace(/RO_PROBE_USERNAME=.*/, `RO_PROBE_USERNAME=${username}`);
+            } else {
+                content += `\nRO_PROBE_USERNAME=${username}\n`;
+            }
+            process.env.RO_PROBE_USERNAME = username;
+        }
+
         fs.writeFileSync(envPath, content, 'utf8');
         process.env.RO_AUTH_TOKEN = token;
 
-        logger.info('Token capture: Updated RO_AUTH_TOKEN in .env and process.env');
+        logger.info('Token capture: Updated .env and process.env', {
+            token: `${token.substring(0, 20)}...`,
+            username: username || 'N/A'
+        });
         return true;
     } catch (error) {
         logger.error('Token capture: Failed to update .env', { error: error.message });
         return false;
     }
 }
+
+// Player count storage is handled by playerCountStore (utils/playerCountStore.js)
 
 // ============================================================
 // Generic TCP forwarder (transparent, no inspection)
@@ -128,6 +146,7 @@ function createForwarder(listenPort, targetIp, targetPort, label) {
             });
 
             clientSocket.on('data', (data) => {
+                logPacket(label, 'Client -> Server', data);
                 if (serverConnected) {
                     serverSocket.write(data);
                 } else {
@@ -136,11 +155,18 @@ function createForwarder(listenPort, targetIp, targetPort, label) {
             });
 
             serverSocket.on('data', (data) => {
+                logPacket(label, 'Server -> Client', data);
                 clientSocket.write(data);
             });
 
-            clientSocket.on('close', () => { serverSocket.destroy(); });
-            serverSocket.on('close', () => { clientSocket.destroy(); });
+            clientSocket.on('close', () => {
+                logger.info(`${label}: Client ${clientAddr} disconnected`);
+                serverSocket.destroy();
+            });
+            serverSocket.on('close', () => {
+                logger.info(`${label}: Server connection closed for ${clientAddr}`);
+                clientSocket.destroy();
+            });
             clientSocket.on('error', (err) => {
                 logger.warn(`${label}: Client error`, { error: err.message });
                 serverSocket.destroy();
@@ -163,6 +189,23 @@ function createForwarder(listenPort, targetIp, targetPort, label) {
     });
 }
 
+/**
+ * Logs a packet with direction, identification, and hex dump.
+ */
+function logPacket(label, direction, data) {
+    if (!data || data.length === 0) return;
+
+    const packetId = data.length >= 2 ? data.readUInt16LE(0) : 0;
+    const packetLen = data.length >= 4 ? data.readUInt16LE(2) : data.length;
+    const identified = roProtocol.identifyPacket(data);
+    const hexPreview = data.slice(0, Math.min(80, data.length)).toString('hex');
+
+    const idStr = `0x${packetId.toString(16).padStart(4, '0')}`;
+    const desc = identified.identified ? identified.description : 'Unknown';
+
+    logger.info(`[PACKET] ${label} | ${direction} | ${idStr} (${desc}) | len=${data.length} pktLen=${packetLen} | hex=${hexPreview}`);
+}
+
 // ============================================================
 // Main Proxy (port 6900 — with token capture)
 // ============================================================
@@ -176,6 +219,8 @@ class TokenCaptureProxy {
         this.lastToken = null;
         this.lastTokenTime = null;
         this.lastUsername = null;
+        this.lastServerList = null;
+        this.lastServerListTime = null;
         this.connections = 0;
         this.tokensCaptured = 0;
         this.listeningPorts = [];
@@ -238,6 +283,8 @@ class TokenCaptureProxy {
         let serverConnected = false;
         let pendingClientData = [];
         let clientBuffer = Buffer.alloc(0);
+        let serverBuffer = Buffer.alloc(0);
+        let capturedUsername = null;
 
         const serverSocket = net.createConnection(PORTS.ACCOUNT, this.targetIp);
 
@@ -253,11 +300,14 @@ class TokenCaptureProxy {
 
         // Client -> Server (capture outgoing packets)
         clientSocket.on('data', (data) => {
+            logPacket('Proxy:6900', 'Client -> Server', data);
+
             clientBuffer = Buffer.concat([clientBuffer, data]);
 
             const token = extractTokenFromPacket(clientBuffer);
             if (token) {
                 const username = extractUsernameFromPacket(clientBuffer);
+                capturedUsername = username;
                 this.lastToken = token;
                 this.lastTokenTime = new Date().toISOString();
                 this.lastUsername = username;
@@ -270,7 +320,7 @@ class TokenCaptureProxy {
                 logger.info(`Token capture: Preview: ${token.substring(0, 40)}...`);
                 logger.info('='.repeat(45));
 
-                updateEnvToken(token);
+                updateEnvToken(token, username);
 
                 if (_onTokenCaptured) {
                     try { _onTokenCaptured(token, username); } catch (e) { /* ignore */ }
@@ -286,9 +336,89 @@ class TokenCaptureProxy {
             }
         });
 
-        // Server -> Client (forward responses transparently)
+        // Server -> Client (capture server response for player counts, then forward)
         serverSocket.on('data', (data) => {
+            // Forward to the game client immediately (transparent)
             clientSocket.write(data);
+
+            // Log every chunk from server
+            logPacket('Proxy:6900', 'Server -> Client', data);
+
+            // Accumulate server data to parse the login response
+            serverBuffer = Buffer.concat([serverBuffer, data]);
+
+            // Need at least 4 bytes for packet header
+            if (serverBuffer.length < 4) return;
+
+            const packetId = serverBuffer.readUInt16LE(0);
+            const packetLen = serverBuffer.readUInt16LE(2);
+
+            // For variable-length packets, wait for full data
+            if (packetLen > 0 && serverBuffer.length < packetLen) {
+                logger.info(`[PARSE] Waiting for more data (${serverBuffer.length}/${packetLen})`);
+                return;
+            }
+
+            logger.info(`[PARSE] Full packet ready: 0x${packetId.toString(16).padStart(4, '0')} len=${packetLen} buffer=${serverBuffer.length}`);
+
+            // Dump full hex for packets > header only (useful for reverse-engineering)
+            if (serverBuffer.length > 10) {
+                // Log in chunks of 64 chars (32 bytes) for readability
+                const fullHex = serverBuffer.slice(0, Math.min(serverBuffer.length, packetLen)).toString('hex');
+                const chunkSize = 64;
+                for (let i = 0; i < fullHex.length; i += chunkSize) {
+                    const offset = i / 2;
+                    logger.info(`[HEX] +${String(offset).padStart(4, '0')}: ${fullHex.slice(i, i + chunkSize)}`);
+                }
+            }
+
+            // Try to parse GNJoy login accepted (0x0C32)
+            const parsed = roProtocol.parseGNJoyLoginAccepted(serverBuffer);
+            if (parsed && parsed.servers && parsed.servers.length > 0) {
+                logger.info('='.repeat(50));
+                logger.info('[RESULT] SERVER LIST CAPTURED!');
+                for (const srv of parsed.servers) {
+                    logger.info(`  ${srv.name}: ${srv.playerCount} players | port=${srv.port} | ${srv.url || srv.ip || 'no url'}`);
+                }
+                logger.info('='.repeat(50));
+
+                playerCountStore.record(parsed.servers);
+                this.lastServerList = parsed.servers;
+                this.lastServerListTime = new Date().toISOString();
+            } else if (parsed && parsed.servers && parsed.servers.length === 0) {
+                logger.warn('[RESULT] 0x0C32 packet recognized but 0 server entries parsed');
+            } else {
+                // Try login refused
+                const errorInfo = roProtocol.parseLoginRefused(serverBuffer);
+                if (errorInfo) {
+                    logger.warn(`[RESULT] Login refused: error=${errorInfo.errorCode} reason="${roProtocol.getRefuseReason(errorInfo.errorCode)}"`);
+                } else {
+                    // Try standard login accepted (0x0069, 0x0AC4)
+                    const stdParsed = roProtocol.parseLoginAccepted(serverBuffer);
+                    if (stdParsed && stdParsed.servers && stdParsed.servers.length > 0) {
+                        logger.info('='.repeat(50));
+                        logger.info('[RESULT] SERVER LIST CAPTURED (standard format)!');
+                        const normalized = stdParsed.servers.map(s => ({
+                            name: s.name,
+                            playerCount: s.userCount || 0,
+                            ip: s.ip,
+                            port: s.port
+                        }));
+                        for (const srv of normalized) {
+                            logger.info(`  ${srv.name}: ${srv.playerCount} players`);
+                        }
+                        logger.info('='.repeat(50));
+
+                        playerCountStore.record(normalized);
+                        this.lastServerList = normalized;
+                        this.lastServerListTime = new Date().toISOString();
+                    } else {
+                        logger.info(`[RESULT] Packet 0x${packetId.toString(16).padStart(4, '0')} not recognized as login response`);
+                    }
+                }
+            }
+
+            serverBuffer = Buffer.alloc(0);
         });
 
         // Cleanup
@@ -362,6 +492,13 @@ class TokenCaptureProxy {
                 length: this.lastToken.length,
                 capturedAt: this.lastTokenTime,
                 username: this.lastUsername
+            } : null,
+            lastServerList: this.lastServerList ? {
+                capturedAt: this.lastServerListTime,
+                servers: this.lastServerList.map(s => ({
+                    name: s.name,
+                    playerCount: s.playerCount
+                }))
             } : null
         };
     }

@@ -1504,8 +1504,8 @@ module.exports = function createApiRoutes(getDiscordClient) {
      */
     router.get('/player-count', (req, res) => {
         try {
-            const playerCountService = require('../../services/playerCountService');
-            const data = playerCountService.getPlayerCounts();
+            const playerCountStore = require('../../utils/playerCountStore');
+            const data = playerCountStore.getLatest();
             res.json({
                 success: true,
                 data
@@ -1541,9 +1541,9 @@ module.exports = function createApiRoutes(getDiscordClient) {
      */
     router.get('/player-count/history', (req, res) => {
         try {
-            const playerCountService = require('../../services/playerCountService');
-            const { limit } = req.query;
-            const history = playerCountService.getHistory(parseInt(limit, 10) || 50);
+            const playerCountStore = require('../../utils/playerCountStore');
+            const { hours } = req.query;
+            const history = playerCountStore.getHistory(parseInt(hours, 10) || 24);
             res.json({
                 success: true,
                 data: { history, total: history.length }
@@ -1568,6 +1568,44 @@ module.exports = function createApiRoutes(getDiscordClient) {
             });
         } catch (error) {
             logger.error('Error getting player count diagnostics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/player-count/stats
+     * Returns global stats and daily aggregates for metrics
+     */
+    router.get('/player-count/stats', (req, res) => {
+        try {
+            const playerCountStore = require('../../utils/playerCountStore');
+            const { days } = req.query;
+            res.json({
+                success: true,
+                data: {
+                    stats: playerCountStore.getStats(),
+                    daily: playerCountStore.getDailyStats(parseInt(days, 10) || 30)
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting player count stats', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/player-count/raw
+     * Returns the full raw JSON (for export/analysis)
+     */
+    router.get('/player-count/raw', (req, res) => {
+        try {
+            const playerCountStore = require('../../utils/playerCountStore');
+            res.json({
+                success: true,
+                data: playerCountStore.getRawData()
+            });
+        } catch (error) {
+            logger.error('Error getting raw player count data', { error: error.message });
             res.status(500).json({ success: false, error: error.message });
         }
     });
