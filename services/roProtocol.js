@@ -121,6 +121,17 @@ function buildLoginPacket(username, password, clientVersion = 20, clientType = 2
 }
 
 /**
+ * Builds a guest login packet (0x0064) - user=guest, pass=guest, version=1
+ * Used by some servers to allow anonymous server list / population check.
+ * @param {number} [clientVersion=1] - Client version (from clientinfo.xml)
+ * @param {number} [clientType=1] - Client type (master_ver)
+ * @returns {Buffer} Login packet (55 bytes)
+ */
+function buildGuestLoginPacket(clientVersion = 1, clientType = 1) {
+    return buildLoginPacket('guest', 'guest', clientVersion, clientType);
+}
+
+/**
  * Builds a PING packet (0x0187)
  * @param {number} accountId - Account ID
  * @returns {Buffer} Ping packet
@@ -978,6 +989,7 @@ async function attemptLogin(host, port, username, password, timeoutMs = 8000) {
 module.exports = {
     PACKET_IDS,
     buildLoginPacket,
+    buildGuestLoginPacket,
     buildSSOLoginPacket,
     buildPingPacket,
     buildCharEnterPacket,

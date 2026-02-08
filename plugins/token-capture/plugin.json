@@ -1,0 +1,9 @@
+{
+    "name": "token-capture",
+    "version": "1.0.0",
+    "description": "Captura automatica de tokens SSO via proxy TCP transparente",
+    "author": "BeeWiki",
+    "main": "index.js",
+    "commands": ["token-capture"],
+    "dependencies": []
+}

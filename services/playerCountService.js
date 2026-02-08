@@ -132,13 +132,16 @@ function saveData(data) {
 }
 
 // ============================================================
-// Strategy 0: SSO Login with manual token (GNJoy LATAM)
+// Strategy 0: SSO Login (GNJoy LATAM)
 // ============================================================
 
 /**
- * Attempts to get player counts via SSO login with manual auth token
- * Requires RO_PROBE_USERNAME and RO_AUTH_TOKEN env vars
- * Token can be extracted from Wireshark capture of the game client
+ * Attempts to get player counts via SSO login
+ * Requires RO_PROBE_USERNAME and RO_AUTH_TOKEN in .env
+ * 
+ * The token is captured automatically by the token-capture plugin
+ * (transparent TCP proxy) or manually via Wireshark.
+ * 
  * @returns {Promise<Object|null>} Server list with player counts, or null
  */
 async function trySSOStrategy() {
@@ -146,7 +149,7 @@ async function trySSOStrategy() {
     const authToken = process.env.RO_AUTH_TOKEN;
 
     if (!username || !authToken) {
-        logger.debug('SSO strategy skipped: RO_PROBE_USERNAME/RO_AUTH_TOKEN not set');
+        logger.debug('SSO strategy skipped: RO_PROBE_USERNAME or RO_AUTH_TOKEN not set');
         return null;
     }
 
@@ -199,7 +202,6 @@ async function trySSOStrategy() {
                 servers: result.servers.map(s => ({ name: s.name, players: s.playerCount }))
             });
 
-            // Save discovered char servers
             discoveredCharServers = result.servers.map(s => ({
                 name: s.name,
                 ip: s.ip || s.url?.split(':')[0] || '',
@@ -228,7 +230,6 @@ async function trySSOStrategy() {
                 errorCode: result.errorCode,
                 reason: result.reason
             });
-            // Error 8 = already logged in, but token format is correct!
             if (result.errorCode === 8) {
                 logger.info('Token format is valid! Account is just already logged in.');
                 return {
@@ -236,32 +237,36 @@ async function trySSOStrategy() {
                     timestamp: new Date().toISOString(),
                     success: false,
                     error: 'already_logged_in',
-                    message: 'Token válido, mas conta já está logada. Tente novamente quando a conta não estiver em uso.',
+                    message: 'Token valido, mas conta ja esta logada. Tente novamente quando a conta nao estiver em uso.',
                     responseTime: result.responseTime
                 };
             }
         } else if (result.type === 'login_refused') {
-            logger.warn('SSO strategy: login refused', {
-                errorCode: result.errorCode,
-                reason: result.reason
-            });
+            const errCode = result.errorCode;
+            logger.warn('SSO strategy: login refused', { errorCode: errCode, reason: result.reason });
+
+            if (errCode === 5011 || errCode === 30) {
+                return {
+                    strategy: 'sso',
+                    timestamp: new Date().toISOString(),
+                    success: false,
+                    error: 'token_expired',
+                    message: `Token invalido ou expirado (erro ${errCode}). Use /token-capture start para capturar um novo token.`,
+                    errorCode: errCode
+                };
+            }
         } else if (result.error === 'timeout') {
-            logger.warn('SSO strategy: timeout - token may have expired or server is not responding', {
-                elapsed: result.elapsed
-            });
+            logger.warn('SSO strategy: timeout', { elapsed: result.elapsed });
             return {
                 strategy: 'sso',
                 timestamp: new Date().toISOString(),
                 success: false,
                 error: 'timeout',
-                message: 'Timeout ao conectar. O token pode ter expirado. Capture um novo token do Wireshark.',
+                message: 'Timeout ao conectar. O token pode ter expirado. Use /token-capture start para capturar um novo.',
                 elapsed: result.elapsed
             };
         } else {
-            logger.warn('SSO strategy failed', {
-                type: result.type,
-                error: result.error
-            });
+            logger.warn('SSO strategy failed', { type: result.type, error: result.error });
         }
 
         return null;
