@@ -7,6 +7,7 @@ const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const InteractionHandler = require('./handlers/interactionHandler');
 const pluginService = require('./services/pluginService');
 const errorAlertService = require('./services/errorAlertService');
+const playerCountService = require('./services/playerCountService');
 const webServer = require('./web/server');
 const config = require('./config');
 const logger = require('./utils/logger');
@@ -56,6 +57,10 @@ const handleReady = () => {
     errorAlertService.setClient(client);
     logger.info('Error alert service started');
 
+    // Start player count monitoring service
+    playerCountService.start();
+    logger.info('Player count service started');
+
     // Start admin web panel if password is configured
     const adminPort = process.env.ADMIN_PORT || 3000;
     const adminHost = process.env.ADMIN_HOST || '0.0.0.0';
@@ -102,6 +107,7 @@ process.on('uncaughtException', (error) => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     logger.info('Received SIGINT, shutting down gracefully...');
+    playerCountService.stop();
     pluginService.shutdown();
     client.destroy();
     process.exit(0);
@@ -109,6 +115,7 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
     logger.info('Received SIGTERM, shutting down gracefully...');
+    playerCountService.stop();
     pluginService.shutdown();
     client.destroy();
     process.exit(0);
