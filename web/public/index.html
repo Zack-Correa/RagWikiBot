@@ -1286,6 +1286,56 @@
                 </div>
             </div>
 
+            <!-- Token Metrics -->
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>🔑 Token SSO — Métricas</h3>
+                </div>
+                <div class="token-metrics-grid" id="token-metrics-grid">
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">Token Atual</div>
+                        <div class="token-metric-value" id="tm-current-status">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">Idade do Token</div>
+                        <div class="token-metric-value" id="tm-current-age">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">Usos com Sucesso</div>
+                        <div class="token-metric-value" id="tm-current-uses">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">TTL Médio</div>
+                        <div class="token-metric-value" id="tm-avg-ttl">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">TTL Mínimo</div>
+                        <div class="token-metric-value" id="tm-min-ttl">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">TTL Máximo</div>
+                        <div class="token-metric-value" id="tm-max-ttl">—</div>
+                    </div>
+                </div>
+                <div class="srv-table-container">
+                    <table class="srv-table">
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th>Capturado</th>
+                                <th>Expirado</th>
+                                <th class="text-right">TTL</th>
+                                <th class="text-center">Usos</th>
+                                <th>Usuário</th>
+                            </tr>
+                        </thead>
+                        <tbody id="token-history-table">
+                            <tr><td colspan="6" class="srv-loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- Daily Stats Table -->
             <div class="srv-card">
                 <div class="srv-card-header">

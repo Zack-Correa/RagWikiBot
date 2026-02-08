@@ -4278,6 +4278,49 @@ code.dash-info-value {
     color: #ED4245;
 }
 
+/* Token metrics grid */
+.token-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.token-metric-box {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 12px 16px;
+    text-align: center;
+}
+
+.token-metric-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.token-metric-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.token-metric-value.status-active {
+    color: #3BA55C;
+}
+
+.token-metric-value.status-expired {
+    color: #ED4245;
+}
+
+.token-metric-value.status-unknown {
+    color: #888;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .srv-card-header {
@@ -4295,5 +4338,9 @@ code.dash-info-value {
 
     .srv-chart-wrapper {
         height: 250px;
+    }
+
+    .token-metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 }

@@ -1610,6 +1610,60 @@ module.exports = function createApiRoutes(getDiscordClient) {
         }
     });
 
+    // ==================== TOKEN METRICS ENDPOINTS ====================
+
+    /**
+     * GET /api/token-metrics
+     * Returns current token status and TTL statistics
+     */
+    router.get('/token-metrics', (req, res) => {
+        try {
+            const tokenMetrics = require('../../utils/tokenMetrics');
+            res.json({
+                success: true,
+                data: tokenMetrics.getStats()
+            });
+        } catch (error) {
+            logger.error('Error getting token metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/token-metrics/history
+     * Returns token capture/expiration history
+     */
+    router.get('/token-metrics/history', (req, res) => {
+        try {
+            const tokenMetrics = require('../../utils/tokenMetrics');
+            const { limit } = req.query;
+            res.json({
+                success: true,
+                data: tokenMetrics.getHistory(parseInt(limit, 10) || 20)
+            });
+        } catch (error) {
+            logger.error('Error getting token history', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/token-metrics/raw
+     * Returns raw token metrics JSON for export
+     */
+    router.get('/token-metrics/raw', (req, res) => {
+        try {
+            const tokenMetrics = require('../../utils/tokenMetrics');
+            res.json({
+                success: true,
+                data: tokenMetrics.getRawData()
+            });
+        } catch (error) {
+            logger.error('Error getting raw token metrics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== PRICING ANALYSIS ENDPOINTS ====================
 
     /**

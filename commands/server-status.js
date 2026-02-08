@@ -7,6 +7,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const serverStatusService = require('../services/serverStatusService');
 const serverStatusStorage = require('../utils/serverStatusStorage');
 const playerCountStore = require('../utils/playerCountStore');
+const tokenMetrics = require('../utils/tokenMetrics');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -99,6 +100,29 @@ module.exports = {
                 embed.addFields({
                     name: '📋 Mudanças Recentes',
                     value: changeLines.join('\n') || 'Nenhuma mudança registrada',
+                    inline: false
+                });
+            }
+
+            // Token info
+            const tokenInfo = tokenMetrics.getCurrent();
+            if (tokenInfo) {
+                const tokenStatus = tokenInfo.status === 'active' ? '🟢 Ativo' : '🔴 Expirado';
+                const tokenAge = tokenInfo.ageHuman || '?';
+                const tokenUses = tokenInfo.useCount || 0;
+                embed.addFields({
+                    name: '🔑 Token SSO',
+                    value: `${tokenStatus} • Idade: ${tokenAge} • Usos: ${tokenUses}`,
+                    inline: false
+                });
+            }
+
+            // TTL stats
+            const ttlStats = tokenMetrics.getStats();
+            if (ttlStats.avgTTLhuman) {
+                embed.addFields({
+                    name: '⏱ TTL Estimado',
+                    value: `Médio: **${ttlStats.avgTTLhuman}** • Mín: ${ttlStats.minTTLhuman || '?'} • Máx: ${ttlStats.maxTTLhuman || '?'}`,
                     inline: false
                 });
             }

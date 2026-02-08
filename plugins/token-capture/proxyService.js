@@ -21,6 +21,7 @@ const path = require('path');
 const os = require('os');
 const roProtocol = require('../../services/roProtocol');
 const playerCountStore = require('../../utils/playerCountStore');
+const tokenMetrics = require('../../utils/tokenMetrics');
 
 const TARGET_HOST = 'lt-account-01.gnjoylatam.com';
 
@@ -321,6 +322,9 @@ class TokenCaptureProxy {
                 logger.info('='.repeat(45));
 
                 updateEnvToken(token, username);
+
+                // Record token capture for TTL metrics
+                tokenMetrics.recordCapture(token, username);
 
                 if (_onTokenCaptured) {
                     try { _onTokenCaptured(token, username); } catch (e) { /* ignore */ }

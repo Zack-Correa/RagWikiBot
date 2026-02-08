@@ -3672,8 +3672,9 @@ async function loadServerData() {
             }
         }
 
-        // Load chart
+        // Load chart + token metrics
         loadPlayerChart(currentChartHours);
+        loadTokenMetrics();
     } catch (error) {
         console.error('Error loading server data:', error);
     }
@@ -3803,6 +3804,71 @@ async function loadPlayerChart(hours = 24) {
         });
     } catch (error) {
         console.error('Error loading player chart:', error);
+    }
+}
+
+async function loadTokenMetrics() {
+    try {
+        const [statsRes, historyRes] = await Promise.all([
+            fetch('/api/token-metrics').then(r => r.json()).catch(() => null),
+            fetch('/api/token-metrics/history?limit=10').then(r => r.json()).catch(() => null)
+        ]);
+
+        if (statsRes?.data) {
+            const stats = statsRes.data;
+            const cur = stats.currentToken;
+
+            // Current token info
+            if (cur) {
+                const statusEl = document.getElementById('tm-current-status');
+                const statusMap = { active: '● Ativo', expired: '● Expirado', unknown: '● ?' };
+                statusEl.textContent = statusMap[cur.status] || cur.status;
+                statusEl.className = `token-metric-value status-${cur.status}`;
+
+                document.getElementById('tm-current-age').textContent = cur.ageHuman || '—';
+                document.getElementById('tm-current-uses').textContent = cur.useCount || '0';
+            } else {
+                document.getElementById('tm-current-status').textContent = 'Nenhum';
+                document.getElementById('tm-current-status').className = 'token-metric-value status-unknown';
+                document.getElementById('tm-current-age').textContent = '—';
+                document.getElementById('tm-current-uses').textContent = '—';
+            }
+
+            // TTL stats
+            document.getElementById('tm-avg-ttl').textContent = stats.avgTTLhuman || '—';
+            document.getElementById('tm-min-ttl').textContent = stats.minTTLhuman || '—';
+            document.getElementById('tm-max-ttl').textContent = stats.maxTTLhuman || '—';
+        }
+
+        // History table
+        if (historyRes?.data && historyRes.data.length > 0) {
+            const rows = historyRes.data.map(h => {
+                const captured = h.capturedAt ? new Date(h.capturedAt).toLocaleString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                }) : '—';
+                const expired = h.expiredAt ? new Date(h.expiredAt).toLocaleString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                }) : '—';
+                const ttlClass = h.ttlMs ? (h.ttlMs > 3600000 ? 'daily-peak' : 'daily-low') : '';
+
+                return `<tr>
+                    <td><code>${h.token || '?'}</code></td>
+                    <td>${captured}</td>
+                    <td>${expired}</td>
+                    <td class="text-right daily-value ${ttlClass}">${h.ttlHuman || '—'}</td>
+                    <td class="text-center">${h.useCount || 0}</td>
+                    <td>${h.username || '—'}</td>
+                </tr>`;
+            });
+            document.getElementById('token-history-table').innerHTML = rows.join('');
+        } else {
+            document.getElementById('token-history-table').innerHTML =
+                '<tr><td colspan="6" class="srv-loading">Nenhum histórico de token ainda</td></tr>';
+        }
+    } catch (error) {
+        console.error('Error loading token metrics:', error);
     }
 }
 
