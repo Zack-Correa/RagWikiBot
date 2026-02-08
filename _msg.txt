@@ -1,6 +1,1 @@
-feat: hosts toggle scripts for proxy activation
-
-- scripts/hosts-toggle.bat: CMD toggle (add/remove hosts entry)
-- scripts/hosts-toggle.ps1: PowerShell toggle with colored output
-- Auto-detects state, flushes DNS, requires Admin
-- Remove /scripts from .gitignore
+chore: remove temp commit helper files
