@@ -989,6 +989,7 @@ async function attemptLogin(host, port, username, password, timeoutMs = 8000) {
 module.exports = {
     PACKET_IDS,
     buildLoginPacket,
+    buildGuestLoginPacket,
     buildSSOLoginPacket,
     buildPingPacket,
     buildCharEnterPacket,

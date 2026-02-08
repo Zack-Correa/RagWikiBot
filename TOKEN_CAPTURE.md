@@ -1,40 +1,49 @@
-# 🔐 Captura Automática de Token SSO
+# Captura Automatica de Token SSO
 
 ## Arquitetura
 
 ```
-  Windows (sua máquina)              Linux (servidor do bot)
-  ┌────────────┐   hosts file       ┌─────────────────────┐
-  │  ragexe.exe │───────────────────>│  Token Capture Proxy │
-  │  (jogo RO)  │  aponta p/ Linux  │  0.0.0.0:6900       │
-  └────────────┘                    │                     │
-                                    │ ✅ Captura 0x0825   │
-                                    │ ✅ Salva .env       │
-                                    │                     │
-                                    │    ┌──────────────┐ │
-                                    │───>│ Servidor Real │ │
-                                    │<───│ GNJoy LATAM  │ │
-                                    │    └──────────────┘ │
-                                    └─────────────────────┘
+  Windows (sua maquina)              Linux (servidor do bot)
+  +--------------+   hosts file     +----------------------+
+  |  ragexe.exe  |----------------->|  Token Capture Proxy  |
+  |  (jogo RO)   |  aponta p/ Linux|  0.0.0.0:6900        |
+  +--------------+                  |                      |
+                                    |  Captura 0x0825      |
+                                    |  Salva .env          |
+                                    |                      |
+                                    |    +--------------+  |
+                                    |--->| Servidor Real |  |
+                                    |<---| GNJoy LATAM  |  |
+                                    |    +--------------+  |
+                                    +----------------------+
 ```
 
-O proxy é **100% transparente**: o jogo funciona normalmente, e o token é
-capturado automaticamente quando você faz login.
+O proxy e **100% transparente**: o jogo funciona normalmente, e o token e
+capturado automaticamente quando voce faz login.
 
-## Configuração
+## Instalacao
+
+O token capture e um **plugin**. Para ativar:
+
+```
+/plugin enable token-capture
+```
+
+## Configuracao
 
 ### 1. No Linux (uma vez)
 
 ```bash
-# O bot já inclui o proxy. Basta iniciar:
+# O bot ja inclui o proxy como plugin. Basta iniciar o bot e ativar:
 node app.js
+# Depois no Discord: /plugin enable token-capture
 
-# Ou rodar o proxy standalone:
+# Ou rodar o proxy standalone (sem bot):
 sudo node scripts/start-token-capture.js
 ```
 
 > **Nota:** A porta 6900 requer `sudo` no Linux. Alternativa: use `setcap`
-> para dar permissão ao node:
+> para dar permissao ao node:
 > ```bash
 > sudo setcap 'cap_net_bind_service=+ep' $(which node)
 > ```
@@ -52,18 +61,20 @@ sudo node scripts/start-token-capture.js
 
 ### 3. Jogar
 
-1. Abrir Ragnarok Online normalmente
-2. Fazer login com usuário, senha e OTP
-3. O token é capturado automaticamente
-4. O bot usa o token para consultar o player count
+1. No Discord: `/token-capture start`
+2. Abrir Ragnarok Online normalmente
+3. Fazer login com usuario, senha e OTP
+4. O token e capturado automaticamente
+5. O bot usa o token para consultar o player count
 
 ## Comandos Discord
 
-| Comando | Descrição |
+| Comando | Descricao |
 |---------|-----------|
+| `/plugin enable token-capture` | Ativa o plugin |
 | `/token-capture start` | Inicia o proxy de captura |
 | `/token-capture stop` | Para o proxy |
-| `/token-capture status` | Mostra status, conexões e último token |
+| `/token-capture status` | Mostra status, conexoes e ultimo token |
 
 ## Como Funciona
 
@@ -74,27 +85,28 @@ sudo node scripts/start-token-capture.js
 5. Salva automaticamente no `.env` como `RO_AUTH_TOKEN`
 6. O `playerCountService` usa esse token para consultar a contagem de jogadores
 
-## Detalhes Técnicos
+## Detalhes Tecnicos
 
 - **Pacote capturado:** `0x0825` (CA_SSO_LOGIN_REQ), 417 bytes
 - **Token:** Base64, ~325 caracteres, offset 92 no pacote
-- **DNS:** O proxy usa DNS público (8.8.8.8) para resolver o IP real do servidor,
-  garantindo que não faz loop para si mesmo
-- **Transparência:** Todo o tráfego é encaminhado sem modificação. O jogo funciona
+- **DNS:** O proxy usa DNS publico (8.8.8.8) para resolver o IP real do servidor,
+  garantindo que nao faz loop para si mesmo
+- **Transparencia:** Todo o trafego e encaminhado sem modificacao. O jogo funciona
   100% normalmente
 
-## Desfazendo a Configuração
+## Desfazendo a Configuracao
 
 Para reverter:
 1. Pare o proxy: `/token-capture stop`
 2. No Windows, remova a linha adicionada do arquivo `hosts`
-3. O jogo voltará a conectar diretamente ao servidor
+3. O jogo voltara a conectar diretamente ao servidor
 
 ## Troubleshooting
 
-| Problema | Solução |
+| Problema | Solucao |
 |----------|---------|
 | Porta 6900 em uso | Use `sudo` ou `setcap` no Linux |
-| Jogo não conecta | Verifique se o IP no hosts está correto (`ping <linux-ip>`) |
-| Token não capturado | Verifique `/token-capture status` - deve mostrar conexões |
-| Token expirado | Faça login no jogo novamente para capturar um novo |
+| Jogo nao conecta | Verifique se o IP no hosts esta correto (`ping <linux-ip>`) |
+| Token nao capturado | Verifique `/token-capture status` - deve mostrar conexoes |
+| Token expirado | Faca login no jogo novamente para capturar um novo |
+| Plugin nao aparece | Verifique se a pasta `plugins/token-capture/` existe |
