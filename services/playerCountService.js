@@ -132,7 +132,79 @@ function saveData(data) {
 }
 
 // ============================================================
-// Strategy 0: SSO Login (GNJoy LATAM)
+// Strategy 0: Proxy Capture (highest priority)
+// ============================================================
+
+/**
+ * Reads player count data that was captured directly by the
+ * token-capture proxy (from the server's login response).
+ * This is the most reliable strategy — no re-authentication needed.
+ * 
+ * Data freshness: considers data valid for up to 2 hours.
+ * 
+ * @returns {Object|null} Player count result, or null
+ */
+function tryProxyCaptureStrategy() {
+    try {
+        const data = loadData();
+        if (!data || !data.servers || Object.keys(data.servers).length === 0) {
+            logger.debug('Proxy capture strategy: no data in player-count.json');
+            return null;
+        }
+
+        // Check the most recent history entry for proxy_capture strategy
+        const lastProxy = data.history?.find(h => h.strategy === 'proxy_capture');
+        if (!lastProxy) {
+            logger.debug('Proxy capture strategy: no proxy_capture entries in history');
+            return null;
+        }
+
+        // Check freshness — accept data up to 2 hours old
+        const age = Date.now() - new Date(lastProxy.timestamp).getTime();
+        const maxAge = 2 * 60 * 60 * 1000; // 2 hours
+
+        if (age > maxAge) {
+            logger.debug('Proxy capture strategy: data too old', {
+                age: `${Math.round(age / 60000)}min`,
+                maxAge: `${maxAge / 60000}min`
+            });
+            return null;
+        }
+
+        // Build result from stored server data
+        const servers = [];
+        for (const [key, srv] of Object.entries(data.servers)) {
+            servers.push({
+                name: srv.name || key,
+                playerCount: srv.playerCount || 0,
+                ip: srv.ip || '',
+                port: srv.port || 0
+            });
+        }
+
+        if (servers.length === 0) {
+            return null;
+        }
+
+        logger.info('Proxy capture strategy: using cached proxy data', {
+            age: `${Math.round(age / 60000)}min`,
+            servers: servers.map(s => `${s.name}: ${s.playerCount}`)
+        });
+
+        return {
+            strategy: 'proxy_capture',
+            timestamp: lastProxy.timestamp,
+            servers,
+            totalPlayers: servers.reduce((sum, s) => sum + (s.playerCount || 0), 0)
+        };
+    } catch (error) {
+        logger.error('Proxy capture strategy error', { error: error.message });
+        return null;
+    }
+}
+
+// ============================================================
+// Strategy 1: SSO Login (GNJoy LATAM)
 // ============================================================
 
 /**
@@ -538,10 +610,32 @@ async function checkPlayerCount(force = false) {
         error: null
     };
 
-    // Strategy 0: SSO Login with manual token (GNJoy LATAM - highest priority)
+    // Strategy 0: Proxy Capture (highest priority — data already captured by proxy)
+    const proxyCaptureResult = tryProxyCaptureStrategy();
+    if (proxyCaptureResult) {
+        checkResult.strategy = proxyCaptureResult.strategy;
+        checkResult.success = true;
+        checkResult.servers = proxyCaptureResult.servers;
+        checkResult.timestamp = proxyCaptureResult.timestamp;
+
+        // No need to update data — proxy already wrote it
+        data.lastCheck = checkResult.timestamp;
+        checkResult.elapsed = Date.now() - checkStart;
+        saveData(data);
+        lastResult = checkResult;
+
+        logger.info('Player count from proxy capture', {
+            servers: checkResult.servers.map(s => `${s.name}: ${s.playerCount}`),
+            elapsed: checkResult.elapsed
+        });
+
+        return checkResult;
+    }
+
+    // Strategy 1: SSO Login with manual token (GNJoy LATAM)
     const ssoResult = await trySSOStrategy();
     
-    // Strategy 1: Login-based (standard RO protocol - fallback)
+    // Strategy 2: Login-based (standard RO protocol - fallback)
     const loginResult = ssoResult ? null : await tryLoginStrategy();
     
     // Use SSO result if available, otherwise fallback to standard login
@@ -582,7 +676,7 @@ async function checkPlayerCount(force = false) {
         });
     }
 
-    // Strategy 2: Port probing (if login didn't work or for discovery)
+    // Strategy 3: Port probing (if login didn't work or for discovery)
     if (!loginResult) {
         const probeResult = await tryProbeStrategy();
         checkResult.probeResults = {
@@ -768,7 +862,8 @@ function getDiagnostics() {
             charServerPorts: CONFIG.charServerPorts,
             checkIntervalMs: CONFIG.checkIntervalMs,
             loginStrategyEnabled: !!(process.env.RO_PROBE_USERNAME && process.env.RO_PROBE_PASSWORD),
-        ssoStrategyEnabled: !!(process.env.RO_PROBE_USERNAME && process.env.RO_AUTH_TOKEN)
+            ssoStrategyEnabled: !!(process.env.RO_PROBE_USERNAME && process.env.RO_AUTH_TOKEN),
+            proxyCaptureEnabled: true // always available when token-capture plugin is running
         },
         probeResults: data.probeResults || {},
         discoveredCharServers: data.discoveredCharServers || [],

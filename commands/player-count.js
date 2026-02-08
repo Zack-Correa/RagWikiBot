@@ -38,11 +38,11 @@ module.exports = {
             } else {
                 result = playerCountService.getPlayerCounts();
 
-                // If no data yet, do a fresh check
-                if (!result.lastCheck && !result.cachedResult) {
-                    result = await playerCountService.forceCheck();
-                } else if (result.cachedResult) {
+                if (result.cachedResult) {
                     result = result.cachedResult;
+                } else {
+                    // No in-memory cache (e.g. bot just started) — check file data
+                    result = await playerCountService.forceCheck();
                 }
             }
 
@@ -103,11 +103,15 @@ async function sendPlayerCounts(interaction, result) {
         }
 
         // Strategy info
-        const strategyText = result.strategy === 'sso' ? '🔐 SSO' :
+        const strategyText = result.strategy === 'proxy_capture' ? '🔄 Proxy (tempo real)' :
+            result.strategy === 'sso' ? '🔐 SSO' :
             result.strategy === 'login' ? '🔑 Login' : '📡 Probe';
+        const timeInfo = result.responseTime || result.elapsed
+            ? ` • Tempo: ${result.responseTime || result.elapsed}ms`
+            : '';
         embed.addFields({
             name: '📊 Informações',
-            value: `Método: ${strategyText} • Tempo: ${result.responseTime || result.elapsed || '?'}ms`,
+            value: `Método: ${strategyText}${timeInfo}`,
             inline: false
         });
 
@@ -151,25 +155,23 @@ async function sendPlayerCounts(interaction, result) {
         embed.addFields({
             name: '💡 Como Habilitar',
             value: [
-                '**1. Ativar o plugin de captura de token:**',
+                '**1. Ativar o plugin de captura:**',
                 '```',
                 '/plugin enable token-capture',
                 '/token-capture start',
                 '```',
                 '',
-                '**2. Configurar o hosts no Windows:**',
-                'Apontar `lt-account-01.gnjoylatam.com` para o IP do bot',
+                '**2. Configurar o hosts no PC do jogo:**',
+                'Editar `C:\\Windows\\System32\\drivers\\etc\\hosts`',
+                '```',
+                '<IP_DO_BOT>  lt-account-01.gnjoylatam.com',
+                '```',
                 '',
                 '**3. Logar no jogo normalmente**',
-                'O token e capturado automaticamente.',
+                'Os dados de players sao capturados automaticamente!',
                 '',
-                '**4. Configurar no `.env`:**',
-                '```',
-                'RO_PROBE_USERNAME=seu_email@email.com',
-                '```',
-                '',
-                '> O token (`RO_AUTH_TOKEN`) e salvo automaticamente pelo plugin.',
-                '> Expira periodicamente — basta logar no jogo novamente.'
+                '> Cada login no jogo atualiza os dados.',
+                '> Nao precisa configurar nada no `.env`.'
             ].join('\n'),
             inline: false
         });
