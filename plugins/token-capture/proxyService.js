@@ -146,6 +146,7 @@ function createForwarder(listenPort, targetIp, targetPort, label) {
             });
 
             clientSocket.on('data', (data) => {
+                logPacket(label, 'Client -> Server', data);
                 if (serverConnected) {
                     serverSocket.write(data);
                 } else {
@@ -154,11 +155,18 @@ function createForwarder(listenPort, targetIp, targetPort, label) {
             });
 
             serverSocket.on('data', (data) => {
+                logPacket(label, 'Server -> Client', data);
                 clientSocket.write(data);
             });
 
-            clientSocket.on('close', () => { serverSocket.destroy(); });
-            serverSocket.on('close', () => { clientSocket.destroy(); });
+            clientSocket.on('close', () => {
+                logger.info(`${label}: Client ${clientAddr} disconnected`);
+                serverSocket.destroy();
+            });
+            serverSocket.on('close', () => {
+                logger.info(`${label}: Server connection closed for ${clientAddr}`);
+                clientSocket.destroy();
+            });
             clientSocket.on('error', (err) => {
                 logger.warn(`${label}: Client error`, { error: err.message });
                 serverSocket.destroy();
@@ -179,6 +187,23 @@ function createForwarder(listenPort, targetIp, targetPort, label) {
             resolve(server);
         });
     });
+}
+
+/**
+ * Logs a packet with direction, identification, and hex dump.
+ */
+function logPacket(label, direction, data) {
+    if (!data || data.length === 0) return;
+
+    const packetId = data.length >= 2 ? data.readUInt16LE(0) : 0;
+    const packetLen = data.length >= 4 ? data.readUInt16LE(2) : data.length;
+    const identified = roProtocol.identifyPacket(data);
+    const hexPreview = data.slice(0, Math.min(80, data.length)).toString('hex');
+
+    const idStr = `0x${packetId.toString(16).padStart(4, '0')}`;
+    const desc = identified.identified ? identified.description : 'Unknown';
+
+    logger.info(`[PACKET] ${label} | ${direction} | ${idStr} (${desc}) | len=${data.length} pktLen=${packetLen} | hex=${hexPreview}`);
 }
 
 // ============================================================
@@ -275,6 +300,8 @@ class TokenCaptureProxy {
 
         // Client -> Server (capture outgoing packets)
         clientSocket.on('data', (data) => {
+            logPacket('Proxy:6900', 'Client -> Server', data);
+
             clientBuffer = Buffer.concat([clientBuffer, data]);
 
             const token = extractTokenFromPacket(clientBuffer);
@@ -314,12 +341,11 @@ class TokenCaptureProxy {
             // Forward to the game client immediately (transparent)
             clientSocket.write(data);
 
+            // Log every chunk from server
+            logPacket('Proxy:6900', 'Server -> Client', data);
+
             // Accumulate server data to parse the login response
             serverBuffer = Buffer.concat([serverBuffer, data]);
-
-            logger.info(`Token capture: Server -> Client ${data.length} bytes (buffer: ${serverBuffer.length} bytes)`, {
-                hex: serverBuffer.slice(0, Math.min(40, serverBuffer.length)).toString('hex')
-            });
 
             // Need at least 4 bytes for packet header
             if (serverBuffer.length < 4) return;
@@ -327,49 +353,51 @@ class TokenCaptureProxy {
             const packetId = serverBuffer.readUInt16LE(0);
             const packetLen = serverBuffer.readUInt16LE(2);
 
-            logger.info(`Token capture: Packet 0x${packetId.toString(16).padStart(4, '0')}, declared length: ${packetLen}, buffered: ${serverBuffer.length}`);
-
             // For variable-length packets, wait for full data
             if (packetLen > 0 && serverBuffer.length < packetLen) {
-                logger.info(`Token capture: Waiting for more data (${serverBuffer.length}/${packetLen})`);
+                logger.info(`[PARSE] Waiting for more data (${serverBuffer.length}/${packetLen})`);
                 return;
+            }
+
+            logger.info(`[PARSE] Full packet ready: 0x${packetId.toString(16).padStart(4, '0')} len=${packetLen} buffer=${serverBuffer.length}`);
+
+            // Dump full hex for packets > header only (useful for reverse-engineering)
+            if (serverBuffer.length > 10) {
+                // Log in chunks of 64 chars (32 bytes) for readability
+                const fullHex = serverBuffer.slice(0, Math.min(serverBuffer.length, packetLen)).toString('hex');
+                const chunkSize = 64;
+                for (let i = 0; i < fullHex.length; i += chunkSize) {
+                    const offset = i / 2;
+                    logger.info(`[HEX] +${String(offset).padStart(4, '0')}: ${fullHex.slice(i, i + chunkSize)}`);
+                }
             }
 
             // Try to parse GNJoy login accepted (0x0C32)
             const parsed = roProtocol.parseGNJoyLoginAccepted(serverBuffer);
             if (parsed && parsed.servers && parsed.servers.length > 0) {
-                logger.info('='.repeat(45));
-                logger.info('Token capture: SERVER LIST CAPTURED!');
+                logger.info('='.repeat(50));
+                logger.info('[RESULT] SERVER LIST CAPTURED!');
                 for (const srv of parsed.servers) {
-                    logger.info(`  ${srv.name}: ${srv.playerCount} players (${srv.url || srv.ip || 'no url'})`);
+                    logger.info(`  ${srv.name}: ${srv.playerCount} players | port=${srv.port} | ${srv.url || srv.ip || 'no url'}`);
                 }
-                logger.info('='.repeat(45));
+                logger.info('='.repeat(50));
 
                 playerCountStore.record(parsed.servers);
                 this.lastServerList = parsed.servers;
                 this.lastServerListTime = new Date().toISOString();
             } else if (parsed && parsed.servers && parsed.servers.length === 0) {
-                // 0x0C32 recognized but no entries parsed
-                logger.warn('Token capture: 0x0C32 packet received but 0 server entries parsed', {
-                    packetLen,
-                    bufferLen: serverBuffer.length,
-                    hex: serverBuffer.slice(0, Math.min(200, serverBuffer.length)).toString('hex')
-                });
+                logger.warn('[RESULT] 0x0C32 packet recognized but 0 server entries parsed');
             } else {
                 // Try login refused
                 const errorInfo = roProtocol.parseLoginRefused(serverBuffer);
                 if (errorInfo) {
-                    logger.warn('Token capture: Server login refused', {
-                        packetId: `0x${packetId.toString(16).padStart(4, '0')}`,
-                        errorCode: errorInfo.errorCode,
-                        reason: roProtocol.getRefuseReason(errorInfo.errorCode)
-                    });
+                    logger.warn(`[RESULT] Login refused: error=${errorInfo.errorCode} reason="${roProtocol.getRefuseReason(errorInfo.errorCode)}"`);
                 } else {
                     // Try standard login accepted (0x0069, 0x0AC4)
                     const stdParsed = roProtocol.parseLoginAccepted(serverBuffer);
                     if (stdParsed && stdParsed.servers && stdParsed.servers.length > 0) {
-                        logger.info('='.repeat(45));
-                        logger.info('Token capture: SERVER LIST CAPTURED (standard format)!');
+                        logger.info('='.repeat(50));
+                        logger.info('[RESULT] SERVER LIST CAPTURED (standard format)!');
                         const normalized = stdParsed.servers.map(s => ({
                             name: s.name,
                             playerCount: s.userCount || 0,
@@ -379,13 +407,13 @@ class TokenCaptureProxy {
                         for (const srv of normalized) {
                             logger.info(`  ${srv.name}: ${srv.playerCount} players`);
                         }
-                        logger.info('='.repeat(45));
+                        logger.info('='.repeat(50));
 
                         playerCountStore.record(normalized);
                         this.lastServerList = normalized;
                         this.lastServerListTime = new Date().toISOString();
                     } else {
-                        logger.info(`Token capture: Server packet 0x${packetId.toString(16).padStart(4, '0')} not a login response (${serverBuffer.length} bytes)`);
+                        logger.info(`[RESULT] Packet 0x${packetId.toString(16).padStart(4, '0')} not recognized as login response`);
                     }
                 }
             }
