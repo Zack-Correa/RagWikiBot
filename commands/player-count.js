@@ -103,8 +103,7 @@ async function sendPlayerCounts(interaction, result) {
         }
 
         // Strategy info
-        const strategyText = result.strategy === 'sso' ? 
-            (result.tokenSource === 'launcher_auto' ? '🔐 SSO (Auto)' : '🔐 SSO (Manual)') :
+        const strategyText = result.strategy === 'sso' ? '🔐 SSO' :
             result.strategy === 'login' ? '🔑 Login' : '📡 Probe';
         embed.addFields({
             name: '📊 Informações',
@@ -152,28 +151,25 @@ async function sendPlayerCounts(interaction, result) {
         embed.addFields({
             name: '💡 Como Habilitar',
             value: [
-                '**Método Automático (Tentativa):**',
-                'Configure no `.env`:',
+                '**1. Ativar o plugin de captura de token:**',
+                '```',
+                '/plugin enable token-capture',
+                '/token-capture start',
+                '```',
+                '',
+                '**2. Configurar o hosts no Windows:**',
+                'Apontar `lt-account-01.gnjoylatam.com` para o IP do bot',
+                '',
+                '**3. Logar no jogo normalmente**',
+                'O token e capturado automaticamente.',
+                '',
+                '**4. Configurar no `.env`:**',
                 '```',
                 'RO_PROBE_USERNAME=seu_email@email.com',
-                'RO_PROBE_PASSWORD=sua_senha',
-                'RO_PROBE_TOTP_SECRET=seu_secret_totp  # Opcional, se tiver 2FA',
                 '```',
                 '',
-                '⚠️ O bot tentará obter o token do jogo automaticamente.',
-                '⚠️ Se não funcionar, você precisará usar o método manual abaixo.',
-                '',
-                '**Método Manual (Recomendado):**',
-                'Capture o token do jogo via Wireshark:',
-                '1. Capture o pacote de login (0x0825) do launcher',
-                '2. Execute: `node extract-token.js <hex_dump>`',
-                '3. Configure no `.env`:',
-                '```',
-                'RO_PROBE_USERNAME=seu_email@email.com',
-                'RO_AUTH_TOKEN=<token_extraido>',
-                '```',
-                '',
-                '💡 O token expira periodicamente. Re-extraia quando necessário.'
+                '> O token (`RO_AUTH_TOKEN`) e salvo automaticamente pelo plugin.',
+                '> Expira periodicamente — basta logar no jogo novamente.'
             ].join('\n'),
             inline: false
         });
