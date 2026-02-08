@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const roProtocol = require('../../services/roProtocol');
+const playerCountStore = require('../../utils/playerCountStore');
 
 const TARGET_HOST = 'lt-account-01.gnjoylatam.com';
 
@@ -120,72 +121,7 @@ function updateEnvToken(token, username) {
     }
 }
 
-/**
- * Save player count data captured from the server response.
- * Writes to the same file that playerCountService reads.
- */
-function savePlayerCounts(servers) {
-    const dataDir = path.join(__dirname, '..', '..', 'data');
-    const dataFile = path.join(dataDir, 'player-count.json');
-
-    try {
-        if (!fs.existsSync(dataDir)) {
-            fs.mkdirSync(dataDir, { recursive: true });
-        }
-
-        let data = {};
-        if (fs.existsSync(dataFile)) {
-            try { data = JSON.parse(fs.readFileSync(dataFile, 'utf8')); } catch (e) { data = {}; }
-        }
-
-        const now = new Date().toISOString();
-
-        data.lastCheck = now;
-        data.lastSuccessfulCheck = now;
-        data.servers = data.servers || {};
-
-        for (const server of servers) {
-            const key = mapServerName(server.name);
-            if (key) {
-                data.servers[key] = {
-                    name: server.name,
-                    playerCount: server.playerCount,
-                    lastUpdated: now,
-                    ip: server.ip || '',
-                    port: server.port || 0
-                };
-            }
-        }
-
-        // Add to history
-        if (!data.history) data.history = [];
-        data.history.unshift({
-            timestamp: now,
-            strategy: 'proxy_capture',
-            servers: servers.map(s => ({ name: s.name, playerCount: s.playerCount })),
-            totalPlayers: servers.reduce((sum, s) => sum + (s.playerCount || 0), 0)
-        });
-        if (data.history.length > 500) data.history = data.history.slice(0, 500);
-
-        data.lastUpdated = now;
-        fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
-
-        logger.info('Token capture: Saved player counts to data/player-count.json', {
-            servers: servers.map(s => `${s.name}: ${s.playerCount}`)
-        });
-    } catch (error) {
-        logger.error('Token capture: Failed to save player counts', { error: error.message });
-    }
-}
-
-function mapServerName(name) {
-    if (!name) return null;
-    const n = name.toUpperCase().trim();
-    if (n.includes('FREY') || n.includes('FRE')) return 'FREYA';
-    if (n.includes('NIDH') || n.includes('NID')) return 'NIDHOGG';
-    if (n.includes('YGGD') || n.includes('YGG')) return 'YGGDRASIL';
-    return null;
-}
+// Player count storage is handled by playerCountStore (utils/playerCountStore.js)
 
 // ============================================================
 // Generic TCP forwarder (transparent, no inspection)
@@ -399,7 +335,7 @@ class TokenCaptureProxy {
                         logger.info('='.repeat(45));
 
                         // Save player counts directly — no need to re-login later
-                        savePlayerCounts(parsed.servers);
+                        playerCountStore.record(parsed.servers);
                         this.lastServerList = parsed.servers;
                         this.lastServerListTime = new Date().toISOString();
                     } else {

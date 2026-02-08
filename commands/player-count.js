@@ -1,59 +1,48 @@
 /**
  * Slash Command: /players
- * Shows online player counts for Ragnarok Online LATAM servers
+ * Shows online player counts for Ragnarok Online LATAM servers.
+ * 
+ * Reads directly from the player count store (data/player-counts.json)
+ * which is populated by the token-capture proxy.
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const playerCountService = require('../services/playerCountService');
+const playerCountStore = require('../utils/playerCountStore');
 const logger = require('../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('players')
         .setDescription('Mostra a quantidade de jogadores online nos servidores')
-        .addBooleanOption(option =>
+        .addStringOption(option =>
             option
-                .setName('atualizar')
-                .setDescription('Forçar uma nova verificação (pode demorar alguns segundos)')
+                .setName('modo')
+                .setDescription('Tipo de informação')
                 .setRequired(false)
-        )
-        .addBooleanOption(option =>
-            option
-                .setName('diagnostico')
-                .setDescription('Mostrar informações de diagnóstico (admin)')
-                .setRequired(false)
+                .addChoices(
+                    { name: 'Atual', value: 'atual' },
+                    { name: 'Histórico (24h)', value: 'historico' },
+                    { name: 'Estatísticas', value: 'stats' },
+                    { name: 'Diagnóstico', value: 'diagnostico' }
+                )
         ),
 
     async execute(interaction) {
-        const forceRefresh = interaction.options.getBoolean('atualizar') || false;
-        const showDiagnostics = interaction.options.getBoolean('diagnostico') || false;
+        const mode = interaction.options.getString('modo') || 'atual';
 
         await interaction.deferReply();
 
         try {
-            let result;
-
-            if (forceRefresh) {
-                result = await playerCountService.forceCheck();
-            } else {
-                result = playerCountService.getPlayerCounts();
-
-                if (result.cachedResult) {
-                    result = result.cachedResult;
-                } else {
-                    // No in-memory cache (e.g. bot just started) — check file data
-                    result = await playerCountService.forceCheck();
-                }
+            switch (mode) {
+                case 'historico':
+                    return sendHistory(interaction);
+                case 'stats':
+                    return sendStats(interaction);
+                case 'diagnostico':
+                    return sendDiagnostics(interaction);
+                default:
+                    return sendCurrent(interaction);
             }
-
-            // Diagnostics mode
-            if (showDiagnostics) {
-                return sendDiagnostics(interaction, result);
-            }
-
-            // Normal mode - show player counts
-            return sendPlayerCounts(interaction, result);
-
         } catch (error) {
             logger.error('Error in /players command', { error: error.message });
 
@@ -69,31 +58,31 @@ module.exports = {
     }
 };
 
-/**
- * Sends the player count embed
- */
-async function sendPlayerCounts(interaction, result) {
-    const embed = new EmbedBuilder()
-        .setTimestamp();
+// ============================================================
+// /players (default) — Current player counts
+// ============================================================
 
-    if (result?.success && result.servers?.length > 0) {
-        // We have player count data!
-        const totalPlayers = result.servers.reduce((sum, s) => sum + (s.playerCount || 0), 0);
+async function sendCurrent(interaction) {
+    const latest = playerCountStore.getLatest();
+    const embed = new EmbedBuilder().setTimestamp();
+
+    if (latest && latest.servers?.length > 0) {
+        const age = Date.now() - new Date(latest.timestamp).getTime();
+        const ageMin = Math.round(age / 60000);
 
         embed
             .setColor('#5865F2')
             .setTitle('👥 Jogadores Online')
-            .setDescription(`**Ragnarok Online LATAM** — Total: **${totalPlayers.toLocaleString('pt-BR')}** jogadores`);
+            .setDescription(`**Ragnarok Online LATAM** — Total: **${latest.totalPlayers.toLocaleString('pt-BR')}** jogadores`);
 
-        // Server bars
-        const maxPlayers = Math.max(...result.servers.map(s => s.playerCount || 0), 1);
+        const maxPlayers = Math.max(...latest.servers.map(s => s.playerCount || 0), 1);
 
-        for (const server of result.servers) {
+        for (const server of latest.servers) {
             const count = server.playerCount || 0;
             const barLength = 20;
             const filled = Math.round((count / maxPlayers) * barLength);
             const bar = '█'.repeat(filled) + '░'.repeat(barLength - filled);
-            const emoji = getServerEmoji(server.name);
+            const emoji = getServerEmoji(server.key);
 
             embed.addFields({
                 name: `${emoji} ${server.name}`,
@@ -102,55 +91,17 @@ async function sendPlayerCounts(interaction, result) {
             });
         }
 
-        // Strategy info
-        const strategyText = result.strategy === 'proxy_capture' ? '🔄 Proxy (tempo real)' :
-            result.strategy === 'sso' ? '🔐 SSO' :
-            result.strategy === 'login' ? '🔑 Login' : '📡 Probe';
-        const timeInfo = result.responseTime || result.elapsed
-            ? ` • Tempo: ${result.responseTime || result.elapsed}ms`
-            : '';
-        embed.addFields({
-            name: '📊 Informações',
-            value: `Método: ${strategyText}${timeInfo}`,
-            inline: false
-        });
+        const freshness = ageMin < 1 ? 'agora' :
+            ageMin < 60 ? `${ageMin}min atrás` :
+            `${Math.round(ageMin / 60)}h atrás`;
 
-        if (result.timestamp) {
-            embed.setFooter({ text: `BeeWiki • Atualizado em ${formatTime(result.timestamp)}` });
-        }
+        embed.setFooter({ text: `BeeWiki • Dados: ${freshness} • ${formatTime(latest.timestamp)}` });
 
     } else {
-        // No player count data - show what we know
         embed
             .setColor('#F5A623')
             .setTitle('👥 Jogadores Online')
-            .setDescription('Não foi possível obter a contagem de jogadores neste momento.');
-
-        // Show server status from the main status service
-        const statusInfo = [];
-
-        if (result?.openPorts?.length > 0) {
-            statusInfo.push(`📡 ${result.openPorts.length} porta(s) de char server encontrada(s)`);
-        }
-
-        if (result?.probeResults) {
-            const pr = result.probeResults;
-            statusInfo.push(`🔍 Hosts resolvidos: ${pr.hostsResolved}`);
-            statusInfo.push(`🚪 Portas abertas: ${pr.openPorts}`);
-            statusInfo.push(`📨 Respostas: ${pr.responses}`);
-        }
-
-        if (result?.error) {
-            statusInfo.push(`⚠️ ${result.error}`);
-        }
-
-        if (statusInfo.length > 0) {
-            embed.addFields({
-                name: '📋 Resultado da Análise',
-                value: statusInfo.join('\n'),
-                inline: false
-            });
-        }
+            .setDescription('Nenhum dado de player count disponível ainda.');
 
         embed.addFields({
             name: '💡 Como Habilitar',
@@ -168,10 +119,7 @@ async function sendPlayerCounts(interaction, result) {
                 '```',
                 '',
                 '**3. Logar no jogo normalmente**',
-                'Os dados de players sao capturados automaticamente!',
-                '',
-                '> Cada login no jogo atualiza os dados.',
-                '> Nao precisa configurar nada no `.env`.'
+                'Os dados são capturados automaticamente a cada login!'
             ].join('\n'),
             inline: false
         });
@@ -182,112 +130,198 @@ async function sendPlayerCounts(interaction, result) {
     return interaction.editReply({ embeds: [embed] });
 }
 
-/**
- * Sends diagnostics embed
- */
-async function sendDiagnostics(interaction, result) {
-    const diagnostics = playerCountService.getDiagnostics();
-    const history = playerCountService.getHistory(5);
+// ============================================================
+// /players modo:historico — Last 24h timeline
+// ============================================================
+
+async function sendHistory(interaction) {
+    const history = playerCountStore.getHistory(24);
+    const embed = new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle('📈 Histórico de Players (24h)')
+        .setTimestamp();
+
+    if (history.length === 0) {
+        embed.setDescription('Nenhum dado nas últimas 24 horas.');
+        embed.setFooter({ text: 'BeeWiki' });
+        return interaction.editReply({ embeds: [embed] });
+    }
+
+    embed.setDescription(`**${history.length}** capturas nas últimas 24 horas`);
+
+    // Show last 10 entries as a table
+    const recent = history.slice(0, 10);
+    const lines = recent.map(h => {
+        const time = formatTime(h.t);
+        const parts = [];
+        if (h.FREYA != null) parts.push(`F: ${h.FREYA}`);
+        if (h.NIDHOGG != null) parts.push(`N: ${h.NIDHOGG}`);
+        if (h.YGGDRASIL != null) parts.push(`Y: ${h.YGGDRASIL}`);
+        return `\`${time}\` — ${parts.join(' | ')} — **${h.total}** total`;
+    });
+
+    embed.addFields({
+        name: '🕐 Capturas Recentes',
+        value: lines.join('\n') || 'N/A',
+        inline: false
+    });
+
+    // Min/Max in period
+    const totals = history.map(h => h.total).filter(t => t != null);
+    if (totals.length > 0) {
+        const peak = Math.max(...totals);
+        const low = Math.min(...totals);
+        const avg = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
+
+        embed.addFields({
+            name: '📊 Resumo (24h)',
+            value: [
+                `🔺 Pico: **${peak.toLocaleString('pt-BR')}**`,
+                `🔻 Mínimo: **${low.toLocaleString('pt-BR')}**`,
+                `📊 Média: **${avg.toLocaleString('pt-BR')}**`
+            ].join('\n'),
+            inline: false
+        });
+    }
+
+    embed.setFooter({ text: 'BeeWiki • Histórico' });
+    return interaction.editReply({ embeds: [embed] });
+}
+
+// ============================================================
+// /players modo:stats — Global statistics
+// ============================================================
+
+async function sendStats(interaction) {
+    const stats = playerCountStore.getStats();
+    const daily = playerCountStore.getDailyStats(7);
+    const embed = new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle('📊 Estatísticas de Players')
+        .setTimestamp();
+
+    // Global
+    const globalLines = [
+        `📅 Primeira captura: ${stats.firstCapture ? formatTime(stats.firstCapture) : 'N/A'}`,
+        `🔢 Total de capturas: **${(stats.totalCaptures || 0).toLocaleString('pt-BR')}**`
+    ];
+
+    if (stats.peak) {
+        globalLines.push(`🏆 Pico absoluto: **${stats.peak.total.toLocaleString('pt-BR')}** (${formatTime(stats.peak.timestamp)})`);
+    }
+
+    embed.addFields({
+        name: '🌐 Geral',
+        value: globalLines.join('\n'),
+        inline: false
+    });
+
+    // Peak by server
+    if (stats.peakByServer && Object.keys(stats.peakByServer).length > 0) {
+        const peakLines = Object.entries(stats.peakByServer).map(([key, p]) => {
+            const emoji = getServerEmoji(key);
+            return `${emoji} **${key}**: ${p.count.toLocaleString('pt-BR')} (${formatTime(p.timestamp)})`;
+        });
+
+        embed.addFields({
+            name: '🏆 Pico por Servidor',
+            value: peakLines.join('\n'),
+            inline: false
+        });
+    }
+
+    // Weekly daily summary
+    const dailyDates = Object.keys(daily).sort();
+    if (dailyDates.length > 0) {
+        const dayLines = dailyDates.map(date => {
+            const d = daily[date];
+            return `\`${date}\` — ⬆ ${d.peak?.total || '?'} ⬇ ${d.low?.total || '?'} ≈ ${d.avgTotal || '?'} (${d.captures}x)`;
+        });
+
+        embed.addFields({
+            name: '📅 Últimos 7 dias',
+            value: dayLines.join('\n').substring(0, 1024),
+            inline: false
+        });
+    }
+
+    embed.setFooter({ text: 'BeeWiki • Estatísticas' });
+    return interaction.editReply({ embeds: [embed] });
+}
+
+// ============================================================
+// /players modo:diagnostico — Debug info
+// ============================================================
+
+async function sendDiagnostics(interaction) {
+    const latest = playerCountStore.getLatest();
+    const stats = playerCountStore.getStats();
+    const history = playerCountStore.getHistory(1); // last 1h
+    const hasRecent = playerCountStore.hasRecentData();
 
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
         .setTitle('🔧 Diagnóstico — Player Count')
         .setTimestamp();
 
-    // Config
     embed.addFields({
-        name: '⚙️ Configuração',
+        name: '📦 Store',
         value: [
-            `**Account Server:** \`${diagnostics.config.accountServer.host}:${diagnostics.config.accountServer.port}\``,
-            `**Login Strategy:** ${diagnostics.config.loginStrategyEnabled ? '✅ Habilitada' : '❌ Desabilitada'}`,
-            `**Intervalo:** ${diagnostics.config.checkIntervalMs / 60000} min`,
-            `**Hosts para probe:** ${diagnostics.config.charServerHosts.length}`,
-            `**Portas para probe:** ${diagnostics.config.charServerPorts.join(', ')}`
+            `Arquivo: \`data/player-counts.json\``,
+            `Dados recentes (< 2h): ${hasRecent ? '✅' : '❌'}`,
+            `Total capturas: ${stats.totalCaptures || 0}`,
+            `Primeira: ${stats.firstCapture ? formatTime(stats.firstCapture) : 'N/A'}`
         ].join('\n'),
         inline: false
     });
 
-    // Probe results
-    if (diagnostics.probeResults?.openPorts?.length > 0) {
-        const portsInfo = diagnostics.probeResults.openPorts
-            .map(p => `• \`${p.host}:${p.port}\` (${p.connectTime}ms${p.receivedBytes ? `, ${p.receivedBytes} bytes` : ''})`)
-            .join('\n');
-
+    if (latest) {
+        const age = Date.now() - new Date(latest.timestamp).getTime();
         embed.addFields({
-            name: '🚪 Portas Abertas Encontradas',
-            value: portsInfo.substring(0, 1024),
+            name: '📡 Última Captura',
+            value: [
+                `Timestamp: ${latest.timestamp}`,
+                `Idade: ${Math.round(age / 60000)} minutos`,
+                `Fonte: ${latest.source}`,
+                `Servidores: ${latest.servers.map(s => `${s.key}: ${s.playerCount}`).join(', ')}`,
+                `Total: ${latest.totalPlayers}`
+            ].join('\n'),
             inline: false
         });
     }
 
-    // Discovered char servers
-    if (diagnostics.discoveredCharServers?.length > 0) {
-        const csInfo = diagnostics.discoveredCharServers
-            .map(cs => `• **${cs.name}** → \`${cs.ip}:${cs.port}\``)
-            .join('\n');
+    embed.addFields({
+        name: '🕐 Capturas (última hora)',
+        value: `${history.length} capturas`,
+        inline: false
+    });
 
-        embed.addFields({
-            name: '🎯 Char Servers Descobertos',
-            value: csInfo,
-            inline: false
-        });
-    }
-
-    // Recent history
-    if (history.length > 0) {
-        const historyText = history.map(h => {
-            const time = formatTime(h.timestamp);
-            const players = h.totalPlayers != null ? `${h.totalPlayers} players` : 'N/A';
-            return `\`${time}\` — ${h.strategy} — ${players}`;
-        }).join('\n');
-
-        embed.addFields({
-            name: '📈 Histórico Recente',
-            value: historyText.substring(0, 1024),
-            inline: false
-        });
-    }
-
-    // Current check result
-    if (result) {
-        const resultInfo = [
-            `**Sucesso:** ${result.success ? '✅' : '❌'}`,
-            `**Estratégia:** ${result.strategy || 'N/A'}`,
-            `**Tempo:** ${result.elapsed || result.responseTime || '?'}ms`,
-            `**Servidores:** ${result.servers?.length || 0}`
-        ];
-
-        if (result.error) {
-            resultInfo.push(`**Erro:** ${result.error}`);
-        }
-
-        embed.addFields({
-            name: '🔄 Última Verificação',
-            value: resultInfo.join('\n'),
-            inline: false
-        });
-    }
+    embed.addFields({
+        name: '⚙️ Configuração',
+        value: [
+            `RO_PROBE_USERNAME: ${process.env.RO_PROBE_USERNAME ? '✅ configurado' : '❌ ausente'}`,
+            `RO_AUTH_TOKEN: ${process.env.RO_AUTH_TOKEN ? `✅ ${process.env.RO_AUTH_TOKEN.substring(0, 20)}...` : '❌ ausente'}`
+        ].join('\n'),
+        inline: false
+    });
 
     embed.setFooter({ text: 'BeeWiki • Diagnóstico' });
-
     return interaction.editReply({ embeds: [embed] });
 }
 
-/**
- * Gets emoji for server name
- */
-function getServerEmoji(name) {
-    if (!name) return '🎮';
-    const n = name.toUpperCase();
-    if (n.includes('FREY')) return '⚔️';
-    if (n.includes('NIDH')) return '🐉';
-    if (n.includes('YGGD')) return '🌳';
+// ============================================================
+// Helpers
+// ============================================================
+
+function getServerEmoji(key) {
+    if (!key) return '🎮';
+    const k = key.toUpperCase();
+    if (k.includes('FREY')) return '⚔️';
+    if (k.includes('NIDH')) return '🐉';
+    if (k.includes('YGGD')) return '🌳';
     return '🎮';
 }
 
-/**
- * Formats timestamp to BRT
- */
 function formatTime(timestamp) {
     try {
         return new Date(timestamp).toLocaleString('pt-BR', {
