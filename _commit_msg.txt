@@ -1,6 +1,0 @@
-feat: hosts toggle scripts for proxy activation
-
-- scripts/hosts-toggle.bat: CMD script to add/remove hosts redirect
-- scripts/hosts-toggle.ps1: PowerShell equivalent with colored output
-- Auto-detects state and toggles (add/remove)
-- Flushes DNS cache, requires Administrator
