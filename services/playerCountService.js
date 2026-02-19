@@ -14,6 +14,7 @@ const dns = require('dns');
 const logger = require('../utils/logger');
 const roProtocol = require('./roProtocol');
 const playerCountStore = require('../utils/playerCountStore');
+const tokenMetrics = require('../utils/tokenMetrics');
 
 // ============================================================
 // Configuration
@@ -87,17 +88,22 @@ async function trySSOStrategy() {
                 servers: result.servers.map(s => ({ name: s.name, players: s.playerCount }))
             });
 
-            // Write to the store
+            // Write to the store + record successful token use
             playerCountStore.record(result.servers, 'sso_login');
+            tokenMetrics.recordSuccess('sso_login');
             return true;
         }
 
+        // Token failed — record for TTL metrics
         if (result.type === 'login_refused') {
             logger.warn('SSO strategy: login refused', { errorCode: result.errorCode });
+            tokenMetrics.recordFailure('login_refused', result.errorCode);
         } else if (result.error === 'timeout') {
             logger.warn('SSO strategy: timeout');
+            tokenMetrics.recordFailure('timeout');
         } else {
             logger.warn('SSO strategy failed', { type: result.type, error: result.error });
+            tokenMetrics.recordFailure(result.error || result.type || 'unknown');
         }
 
         return null;

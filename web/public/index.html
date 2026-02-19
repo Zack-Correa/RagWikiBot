@@ -26,6 +26,7 @@
             <a href="#audit" class="nav-link" data-section="audit">Auditoria</a>
             <a href="#plugins" class="nav-link" data-section="plugins">Plugins</a>
             <a href="#accounts" class="nav-link" data-section="accounts">Contas</a>
+            <a href="#servers" class="nav-link" data-section="servers">Servidores</a>
             <a href="/logout" class="nav-link logout">Sair</a>
         </div>
     </nav>
@@ -1213,6 +1214,156 @@
                 </div>
             </div>
         </div>
+        <!-- Servers Section -->
+        <section id="servers" class="section">
+            <h2>🖥️ Servidores & Player Counts</h2>
+
+            <!-- Server Status Cards -->
+            <div class="dashboard-stats" id="server-status-cards">
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="srv-total-players">—</div>
+                    <div class="dash-stat-label">Total Online</div>
+                </div>
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="srv-total-captures">—</div>
+                    <div class="dash-stat-label">Capturas</div>
+                </div>
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="srv-peak-players">—</div>
+                    <div class="dash-stat-label">Pico Absoluto</div>
+                </div>
+                <div class="dash-stat-card">
+                    <div class="dash-stat-value" id="srv-servers-online">—</div>
+                    <div class="dash-stat-label">Servidores Online</div>
+                </div>
+            </div>
+
+            <!-- Server Status Table -->
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>Status dos Servidores</h3>
+                    <div class="srv-card-actions">
+                        <button class="btn btn-primary btn-sm" onclick="forcePlayerCheck()" id="btn-force-player-check">
+                            👥 Atualizar Players
+                        </button>
+                        <button class="btn btn-sm" onclick="forceServerCheck()" id="btn-force-server-check">
+                            🔄 Verificar Status
+                        </button>
+                    </div>
+                </div>
+                <div class="srv-table-container">
+                    <table class="srv-table">
+                        <thead>
+                            <tr>
+                                <th>Servidor</th>
+                                <th>Status</th>
+                                <th>Latência</th>
+                                <th>Players</th>
+                                <th>Último Check</th>
+                            </tr>
+                        </thead>
+                        <tbody id="server-status-table">
+                            <tr><td colspan="5" class="srv-loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="srv-last-update" id="srv-last-update"></div>
+            </div>
+
+            <!-- Player Count Chart -->
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>Player Count — Timeline</h3>
+                    <div class="srv-chart-range">
+                        <button class="btn btn-sm srv-range-btn" data-hours="6" onclick="loadPlayerChart(6)">6h</button>
+                        <button class="btn btn-sm srv-range-btn active" data-hours="24" onclick="loadPlayerChart(24)">24h</button>
+                        <button class="btn btn-sm srv-range-btn" data-hours="72" onclick="loadPlayerChart(72)">3d</button>
+                        <button class="btn btn-sm srv-range-btn" data-hours="168" onclick="loadPlayerChart(168)">7d</button>
+                    </div>
+                </div>
+                <div class="srv-chart-wrapper">
+                    <canvas id="player-count-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Token Metrics -->
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>🔑 Token SSO — Métricas</h3>
+                </div>
+                <div class="token-metrics-grid" id="token-metrics-grid">
+                    <div class="token-metric-box token-metric-wide">
+                        <div class="token-metric-label">Token Atual</div>
+                        <div class="token-metric-value" id="tm-current-status">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">Usuário</div>
+                        <div class="token-metric-value token-metric-small" id="tm-current-user">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">Idade</div>
+                        <div class="token-metric-value" id="tm-current-age">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">Usos OK</div>
+                        <div class="token-metric-value" id="tm-current-uses">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">TTL Médio</div>
+                        <div class="token-metric-value" id="tm-avg-ttl">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">TTL Mín</div>
+                        <div class="token-metric-value" id="tm-min-ttl">—</div>
+                    </div>
+                    <div class="token-metric-box">
+                        <div class="token-metric-label">TTL Máx</div>
+                        <div class="token-metric-value" id="tm-max-ttl">—</div>
+                    </div>
+                </div>
+                <div class="srv-table-container">
+                    <table class="srv-table">
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th>Capturado</th>
+                                <th>Expirado</th>
+                                <th class="text-right">TTL</th>
+                                <th class="text-center">Usos</th>
+                                <th>Usuário</th>
+                            </tr>
+                        </thead>
+                        <tbody id="token-history-table">
+                            <tr><td colspan="6" class="srv-loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Daily Stats Table -->
+            <div class="srv-card">
+                <div class="srv-card-header">
+                    <h3>Agregados Diários</h3>
+                </div>
+                <div class="srv-table-container">
+                    <table class="srv-table">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th class="text-center">Capturas</th>
+                                <th class="text-right">Média</th>
+                                <th class="text-right">Pico</th>
+                                <th class="text-right">Mínimo</th>
+                            </tr>
+                        </thead>
+                        <tbody id="daily-stats-table">
+                            <tr><td colspan="5" class="srv-loading">Carregando...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
     </main>
 
     <div class="toast-container" id="toast-container"></div>

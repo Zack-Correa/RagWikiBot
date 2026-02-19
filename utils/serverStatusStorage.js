@@ -10,8 +10,8 @@ const logger = require('./logger');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const STATUS_FILE = path.join(DATA_DIR, 'server-status.json');
 
-// Servers to track
-const SERVERS = ['FREYA', 'NIDHOGG', 'YGGDRASIL'];
+// Servers to track (game worlds + account server)
+const SERVERS = ['FREYA', 'NIDHOGG', 'YGGDRASIL', 'ACCOUNT'];
 
 /**
  * Ensures data directory exists
