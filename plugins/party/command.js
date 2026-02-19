@@ -45,6 +45,7 @@ const COMMON_INSTANCES = [
     'Laboratório de Wolfchev',
     'Fortaleza Voadora',
     'Glastheim Sombria',
+    'Queda de Glastheim',
     
     // Semanais
     'Torre sem Fim',
@@ -54,7 +55,8 @@ const COMMON_INSTANCES = [
     'Túmulo do Monarca',
     'Hospital Abandonado',
     'Lago de Bakonawa',
-    'Sarah vs Fenrir'
+    'Sarah vs Fenrir',
+    'Ruína de Glastheim'
 ];
 
 module.exports = {
