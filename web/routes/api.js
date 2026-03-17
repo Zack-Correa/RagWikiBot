@@ -925,53 +925,62 @@ module.exports = function createApiRoutes(getDiscordClient) {
      * GET /api/permissions
      * Returns all permissions with resolved info
      */
+    /**
+     * GET /api/permissions
+     * Returns all permissions grouped by plugin, with resolved info.
+     * Optional query param: ?plugin=market-alerts (filter by plugin)
+     */
     router.get('/permissions', async (req, res) => {
         try {
-            const permissions = configStorage.getAlertPermissions();
+            const { plugin } = req.query;
             const { PERMISSION_TYPES } = configStorage;
-            
-            // Resolve info for each permission
-            const permissionsWithInfo = await Promise.all(permissions.map(async (perm) => {
-                const result = { ...perm };
-                
-                if (perm.type === PERMISSION_TYPES.USER_ID) {
-                    const userInfo = await getUserInfo(getDiscordClient, perm.value);
-                    result.resolvedInfo = {
-                        displayName: userInfo.displayName,
-                        username: userInfo.username,
-                        avatar: userInfo.avatar
-                    };
-                } else if (perm.type === PERMISSION_TYPES.ROLE_ID) {
-                    // Try to resolve role name from any guild the bot is in
-                    const client = getDiscordClient();
-                    if (client) {
-                        for (const guild of client.guilds.cache.values()) {
-                            const role = guild.roles.cache.get(perm.value);
-                            if (role) {
-                                result.resolvedInfo = {
-                                    name: role.name,
-                                    color: role.hexColor,
-                                    guildName: guild.name
-                                };
-                                break;
+            const allPermissions = configStorage.getPermissions();
+
+            const pluginsToResolve = plugin
+                ? { [plugin]: allPermissions[plugin] || [] }
+                : allPermissions;
+
+            const resolvedByPlugin = {};
+
+            for (const [pluginName, perms] of Object.entries(pluginsToResolve)) {
+                resolvedByPlugin[pluginName] = await Promise.all(perms.map(async (perm) => {
+                    const result = { ...perm, plugin: pluginName };
+
+                    if (perm.type === PERMISSION_TYPES.USER_ID) {
+                        const userInfo = await getUserInfo(getDiscordClient, perm.value);
+                        result.resolvedInfo = {
+                            displayName: userInfo.displayName,
+                            username: userInfo.username,
+                            avatar: userInfo.avatar
+                        };
+                    } else if (perm.type === PERMISSION_TYPES.ROLE_ID) {
+                        const client = getDiscordClient();
+                        if (client) {
+                            for (const guild of client.guilds.cache.values()) {
+                                const role = guild.roles.cache.get(perm.value);
+                                if (role) {
+                                    result.resolvedInfo = { name: role.name, color: role.hexColor, guildName: guild.name };
+                                    break;
+                                }
                             }
                         }
+                        if (!result.resolvedInfo) result.resolvedInfo = { name: perm.value };
+                    } else if (perm.type === PERMISSION_TYPES.USERNAME) {
+                        result.resolvedInfo = { displayName: perm.value };
                     }
-                    if (!result.resolvedInfo) {
-                        result.resolvedInfo = { name: perm.value };
-                    }
-                } else if (perm.type === PERMISSION_TYPES.USERNAME) {
-                    result.resolvedInfo = { displayName: perm.value };
-                }
-                
-                return result;
-            }));
-            
+                    return result;
+                }));
+            }
+
+            const flat = Object.values(resolvedByPlugin).flat();
+
             res.json({
                 success: true,
                 data: {
-                    permissions: permissionsWithInfo,
-                    total: permissionsWithInfo.length,
+                    permissionsByPlugin: resolvedByPlugin,
+                    permissions: flat,
+                    total: flat.length,
+                    plugins: Object.keys(allPermissions).filter(p => allPermissions[p].length > 0),
                     types: PERMISSION_TYPES
                 }
             });
@@ -983,33 +992,33 @@ module.exports = function createApiRoutes(getDiscordClient) {
 
     /**
      * POST /api/permissions
-     * Adds a new permission
-     * Body: { type: 'userId'|'username'|'roleId', value: string }
+     * Adds a new permission.
+     * Body: { plugin: string, type: 'userId'|'username'|'roleId', value: string }
      */
     router.post('/permissions', (req, res) => {
         try {
-            const { type, value } = req.body;
-            
-            if (!type || !value) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: 'Tipo e valor são obrigatórios' 
+            const { plugin, type, value } = req.body;
+
+            if (!plugin || !type || !value) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Plugin, tipo e valor são obrigatórios'
                 });
             }
-            
-            const permission = configStorage.addPermission(type, value);
-            
-            logger.info('Permission added by admin', { type, value });
+
+            const permission = configStorage.addPermission(plugin, type, value);
+
+            logger.info('Permission added by admin', { plugin, type, value });
             auditLogger.logAdminAction({
                 action: auditLogger.ACTIONS.PERMISSION_ADD,
                 req,
                 target: auditLogger.createTarget('permission', permission.id, value),
-                details: { type, value }
+                details: { plugin, type, value }
             });
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 data: permission,
-                message: 'Permissão adicionada com sucesso' 
+                message: 'Permissão adicionada com sucesso'
             });
         } catch (error) {
             logger.error('Error adding permission', { error: error.message });
@@ -1019,73 +1028,54 @@ module.exports = function createApiRoutes(getDiscordClient) {
 
     /**
      * DELETE /api/permissions/:id
-     * Removes a permission by ID
-     * Also clears user alerts if it's a userId or username permission
+     * Removes a permission by ID.
+     * Optional query param: ?plugin=market-alerts
      */
     router.delete('/permissions/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            
-            // First, get the permission to check its type
-            const permissions = configStorage.getAlertPermissions();
-            const permission = permissions.find(p => p.id === id || p.value === id);
-            
+            const { plugin } = req.query;
+
+            // Try to find the permission to resolve username → userId
+            const allPerms = configStorage.getPermissions();
+            let permission = null;
+            for (const perms of Object.values(allPerms)) {
+                permission = perms.find(p => p.id === id || p.value === id);
+                if (permission) break;
+            }
+
             let resolvedUserId = null;
-            
-            // If it's a username permission, try to resolve the user ID
             if (permission && permission.type === 'username') {
                 const client = getDiscordClient();
                 if (client) {
-                    // Search for user by username across all guilds
                     for (const guild of client.guilds.cache.values()) {
                         try {
                             const members = await guild.members.fetch();
-                            const member = members.find(m => 
+                            const member = members.find(m =>
                                 m.user.username.toLowerCase() === permission.value.toLowerCase()
                             );
-                            if (member) {
-                                resolvedUserId = member.user.id;
-                                logger.info('Resolved username to userId', { 
-                                    username: permission.value, 
-                                    userId: resolvedUserId 
-                                });
-                                break;
-                            }
-                        } catch (err) {
-                            logger.debug('Could not fetch members from guild', { 
-                                guildId: guild.id, 
-                                error: err.message 
-                            });
-                        }
+                            if (member) { resolvedUserId = member.user.id; break; }
+                        } catch { /* ignore */ }
                     }
                 }
             }
-            
-            const result = configStorage.removePermission(id, resolvedUserId);
-            
+
+            const result = configStorage.removePermission(id, plugin || null, resolvedUserId);
+
             if (result.removed) {
-                logger.info('Permission removed by admin', { 
-                    permissionId: id, 
-                    alertsCleared: result.alertsCleared,
-                    resolvedUserId
-                });
                 auditLogger.logAdminAction({
                     action: auditLogger.ACTIONS.PERMISSION_REMOVE,
                     req,
                     target: auditLogger.createTarget('permission', id),
-                    details: { alertsCleared: result.alertsCleared, resolvedUserId }
+                    details: { plugin: result.plugin, alertsCleared: result.alertsCleared }
                 });
-                
+
                 let message = 'Permissão removida com sucesso';
                 if (result.alertsCleared > 0) {
                     message += ` (${result.alertsCleared} alerta(s) do usuário também foram removidos)`;
                 }
-                
-                res.json({ 
-                    success: true, 
-                    message,
-                    alertsCleared: result.alertsCleared
-                });
+
+                res.json({ success: true, message, alertsCleared: result.alertsCleared });
             } else {
                 res.status(404).json({ success: false, error: 'Permissão não encontrada' });
             }
@@ -3337,6 +3327,299 @@ module.exports = function createApiRoutes(getDiscordClient) {
 
     // ==================== SHARED ACCOUNTS ROUTES ====================
     
+    // ==================== CHANGELOG MONITOR ROUTES ====================
+
+    function getChangelogApi() {
+        const pluginService = require('../../services/pluginService');
+        return pluginService.getPluginApi('changelog-monitor');
+    }
+
+    /**
+     * GET /api/changelog/status
+     * Returns changelog monitor status, config, and cache info
+     */
+    router.get('/changelog/status', (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            const status = api.getStatus();
+            const changelogStorage = require('../../utils/changelogStorage');
+            const lastChangelog = changelogStorage.getLastChangelog();
+            const guildChannels = api.getGuildChannels();
+
+            res.json({
+                success: true,
+                data: {
+                    ...status,
+                    guildChannels,
+                    guildCount: Object.keys(guildChannels).length,
+                    hasCache: !!lastChangelog,
+                    cacheTopicId: lastChangelog?.topicId || null,
+                    cacheGeneratedAt: lastChangelog?.generatedAt || null,
+                    cachePagesCount: lastChangelog?.pages?.length || 0
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting changelog status', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/changelog/cache
+     * Returns the full cached changelog (pages, markdown, metadata)
+     */
+    router.get('/changelog/cache', (req, res) => {
+        try {
+            const changelogStorage = require('../../utils/changelogStorage');
+            const lastChangelog = changelogStorage.getLastChangelog();
+
+            if (!lastChangelog) {
+                return res.json({ success: true, data: null });
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    topicId: lastChangelog.topicId,
+                    topicMeta: lastChangelog.topicMeta,
+                    generatedAt: lastChangelog.generatedAt,
+                    pagesCount: lastChangelog.pages?.length || 0,
+                    pages: lastChangelog.pages,
+                    markdown: lastChangelog.markdown
+                }
+            });
+        } catch (error) {
+            logger.error('Error getting changelog cache', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/changelog/topics
+     * Returns all processed topics
+     */
+    router.get('/changelog/topics', (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            const topics = api.getProcessedTopics();
+
+            res.json({
+                success: true,
+                data: topics
+            });
+        } catch (error) {
+            logger.error('Error getting changelog topics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/changelog/check
+     * Triggers a manual check for new changelogs
+     */
+    router.post('/changelog/check', async (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            logger.info('Admin triggering manual changelog check');
+            await api.checkForNewChangelogs();
+
+            res.json({
+                success: true,
+                message: 'Verificação de changelogs iniciada'
+            });
+        } catch (error) {
+            logger.error('Error triggering changelog check', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/changelog/generate
+     * Generates a summary from a specific topic URL
+     */
+    router.post('/changelog/generate', async (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            const { url } = req.body;
+            if (!url || !url.includes('divine-pride.net')) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'URL do Divine Pride é obrigatória'
+                });
+            }
+
+            logger.info('Admin generating changelog summary', { url });
+            const result = await api.generateSummary(url);
+
+            if (!result) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Não foi possível obter/processar o changelog'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    stats: result.stats,
+                    source: result.source,
+                    pagesCount: result.embeds?.length || 0,
+                    markdown: result.templateMarkdown
+                }
+            });
+        } catch (error) {
+            logger.error('Error generating changelog', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/changelog/cache
+     * Clears the cached last changelog
+     */
+    router.delete('/changelog/cache', (req, res) => {
+        try {
+            const changelogStorage = require('../../utils/changelogStorage');
+            changelogStorage.setLastChangelog(null);
+
+            logger.info('Admin cleared changelog cache');
+            res.json({ success: true, message: 'Cache do changelog limpo' });
+        } catch (error) {
+            logger.error('Error clearing changelog cache', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/changelog/topics
+     * Clears all processed topic records
+     */
+    router.delete('/changelog/topics', (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            api.clearProcessed();
+
+            logger.info('Admin cleared processed changelog topics');
+            res.json({ success: true, message: 'Tópicos processados limpos' });
+        } catch (error) {
+            logger.error('Error clearing changelog topics', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/changelog/channels
+     * Returns all guild→channel mappings with guild names
+     */
+    router.get('/changelog/channels', async (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            const guildChannels = api.getGuildChannels();
+            const entries = [];
+
+            for (const [guildId, channelId] of Object.entries(guildChannels)) {
+                let guildName = guildId;
+                let channelName = channelId;
+
+                try {
+                    const pluginService = require('../../services/pluginService');
+                    const client = pluginService.getClient?.() || null;
+                    if (client) {
+                        const guild = client.guilds.cache.get(guildId);
+                        if (guild) {
+                            guildName = guild.name;
+                            const channel = guild.channels.cache.get(channelId);
+                            if (channel) channelName = `#${channel.name}`;
+                        }
+                    }
+                } catch { /* best-effort */ }
+
+                entries.push({ guildId, guildName, channelId, channelName });
+            }
+
+            res.json({ success: true, data: entries });
+        } catch (error) {
+            logger.error('Error getting changelog channels', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/changelog/channels/:guildId
+     * Removes a guild's changelog channel
+     */
+    router.delete('/changelog/channels/:guildId', (req, res) => {
+        try {
+            const api = getChangelogApi();
+
+            if (!api) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Plugin changelog-monitor não está habilitado'
+                });
+            }
+
+            const { guildId } = req.params;
+            api.removeGuildChannel(guildId);
+
+            logger.info('Admin removed changelog channel for guild', { guildId });
+            res.json({ success: true, message: `Canal removido para guild ${guildId}` });
+        } catch (error) {
+            logger.error('Error removing changelog channel', { error: error.message });
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== SHARED ACCOUNTS ROUTES ====================
+
     /**
      * Helper to get shared-accounts plugin API
      */

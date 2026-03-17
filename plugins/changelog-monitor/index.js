@@ -141,6 +141,7 @@ async function parseAndAnalyze(topic) {
     if (!content) return null;
 
     const parsed = dpForum.parseChangelogHTML(content.html);
+    content.html = null;
     await dpForum.deduplicateChangelog(parsed);
 
     let analysis = null;
@@ -170,10 +171,22 @@ async function processChangelog(topic, config) {
     const stats = summaryGenerator.getChangelogStats(parsed);
     pluginLogger.info('Changelog parsed', { topicId: topic.topicId, stats });
 
-    if (config.channelId && config.autoPost) {
-        const embeds = summaryGenerator.buildChangelogEmbeds(parsed, topic, analysis);
-        const templateMarkdown = summaryGenerator.generateSummary(parsed, topic);
-        await postToChannel(config.channelId, topic, embeds, templateMarkdown);
+    if (config.autoPost) {
+        const guildChannels = changelogStorage.getGuildChannels();
+        const channelIds = Object.values(guildChannels);
+
+        if (channelIds.length > 0) {
+            const embeds = summaryGenerator.buildChangelogEmbeds(parsed, topic, analysis);
+            const templateMarkdown = summaryGenerator.generateSummary(parsed, topic);
+
+            for (const channelId of channelIds) {
+                try {
+                    await postToChannel(channelId, topic, embeds, templateMarkdown);
+                } catch (err) {
+                    pluginLogger.error('Failed to post to guild channel', { channelId, error: err.message });
+                }
+            }
+        }
     }
 
     changelogStorage.markProcessed(topic.topicId, {
@@ -384,6 +397,9 @@ module.exports = {
         },
         getProcessedTopics: changelogStorage.getProcessedTopics,
         clearProcessed: changelogStorage.clearProcessed,
+        getGuildChannels: changelogStorage.getGuildChannels,
+        setGuildChannel: changelogStorage.setGuildChannel,
+        removeGuildChannel: changelogStorage.removeGuildChannel,
         generateSummary: async (topicUrl) => {
             const topicIdMatch = topicUrl.match(/\/topic\/(\d+)-/);
             const meta = {

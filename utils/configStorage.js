@@ -25,14 +25,14 @@ const DEFAULT_CONFIG = {
     cooldownMinutes: 60,
     requestDelayMs: 2000,
     
-    // Permissions for alert commands
-    // Each entry: { type: 'userId'|'username'|'roleId', value: string, addedAt: ISO date }
-    alertPermissions: [],
+    // Per-plugin permissions: { [pluginName]: Permission[] }
+    pluginPermissions: {},
     
-    // Legacy whitelist (for backwards compatibility, will be migrated)
+    // Legacy fields (migrated on load)
+    alertPermissions: [],
     alertWhitelist: [],
     
-    // Whether to allow admins regardless of whitelist
+    // Whether to allow admins regardless of permissions
     allowAdmins: true
 };
 
@@ -110,264 +110,248 @@ function getRequestDelayMs() {
     return config.requestDelayMs;
 }
 
+function generatePermId() {
+    return `perm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 /**
- * Migrates old whitelist format to new permissions format
- * Also ensures all permissions have IDs
- * @param {Object} config - Config object
- * @returns {Object} Updated config
+ * Migrates legacy alertPermissions/alertWhitelist into pluginPermissions['market-alerts'].
+ * Also ensures all permissions have IDs.
  */
-function migrateWhitelist(config) {
+function migratePermissions(config) {
     let needsSave = false;
-    
-    // Migrate old whitelist
+
+    if (!config.pluginPermissions) config.pluginPermissions = {};
+
+    // Migrate legacy alertWhitelist → alertPermissions first
     if (config.alertWhitelist && config.alertWhitelist.length > 0) {
-        if (!config.alertPermissions) {
-            config.alertPermissions = [];
-        }
-        
+        if (!config.alertPermissions) config.alertPermissions = [];
+
         for (const userId of config.alertWhitelist) {
-            // Check if already migrated
             const exists = config.alertPermissions.some(
                 p => p.type === PERMISSION_TYPES.USER_ID && p.value === userId
             );
-            
             if (!exists) {
                 config.alertPermissions.push({
-                    id: `perm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    id: generatePermId(),
                     type: PERMISSION_TYPES.USER_ID,
                     value: userId,
                     addedAt: new Date().toISOString()
                 });
             }
         }
-        
-        // Clear old whitelist after migration
         config.alertWhitelist = [];
         needsSave = true;
-        logger.info('Migrated legacy whitelist to new permissions format');
     }
-    
-    // Ensure all permissions have IDs (fix for permissions added without ID)
-    if (config.alertPermissions) {
+
+    // Migrate alertPermissions → pluginPermissions['market-alerts']
+    if (config.alertPermissions && config.alertPermissions.length > 0) {
+        if (!config.pluginPermissions['market-alerts']) {
+            config.pluginPermissions['market-alerts'] = [];
+        }
+
         for (const perm of config.alertPermissions) {
+            if (!perm.id) perm.id = generatePermId();
+            const exists = config.pluginPermissions['market-alerts'].some(
+                p => p.type === perm.type && p.value.toLowerCase() === perm.value.toLowerCase()
+            );
+            if (!exists) {
+                config.pluginPermissions['market-alerts'].push(perm);
+            }
+        }
+        config.alertPermissions = [];
+        needsSave = true;
+        logger.info('Migrated alertPermissions to pluginPermissions[market-alerts]');
+    }
+
+    // Ensure all permissions across all plugins have IDs
+    for (const perms of Object.values(config.pluginPermissions)) {
+        for (const perm of perms) {
             if (!perm.id) {
-                perm.id = `perm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                perm.id = generatePermId();
                 needsSave = true;
             }
         }
-        
-        if (needsSave) {
-            logger.info('Added missing IDs to permissions');
-        }
     }
-    
-    if (needsSave) {
-        saveConfig(config);
-    }
-    
+
+    if (needsSave) saveConfig(config);
     return config;
 }
 
 /**
- * Gets all alert permissions
- * @returns {Array<Object>}
+ * Gets permissions for a specific plugin (or all).
+ * @param {string} [plugin] - Plugin name. If omitted, returns all permissions grouped by plugin.
+ * @returns {Array<Object>|Object}
  */
-function getAlertPermissions() {
+function getPermissions(plugin) {
     let config = loadConfig();
-    config = migrateWhitelist(config);
-    return config.alertPermissions || [];
+    config = migratePermissions(config);
+
+    if (plugin) {
+        return config.pluginPermissions[plugin] || [];
+    }
+    return config.pluginPermissions || {};
 }
 
-/**
- * Gets the whitelist of user IDs (legacy, for backwards compatibility)
- * @returns {Array<string>}
- */
+// Legacy alias
+function getAlertPermissions() {
+    return getPermissions('market-alerts');
+}
+
 function getAlertWhitelist() {
-    const permissions = getAlertPermissions();
-    return permissions
+    return getPermissions('market-alerts')
         .filter(p => p.type === PERMISSION_TYPES.USER_ID)
         .map(p => p.value);
 }
 
 /**
- * Checks if a user is allowed to use alert commands
- * @param {Object} params - Check parameters
+ * Checks if a user is allowed to use a plugin's commands.
+ * @param {Object} params
+ * @param {string} params.plugin - Plugin name to check permissions for
  * @param {string} params.userId - Discord user ID
  * @param {string} params.username - Discord username
- * @param {Array<string>} params.roleIds - Array of role IDs the user has
- * @param {boolean} params.isAdmin - Whether the user is an admin
+ * @param {Array<string>} params.roleIds - Role IDs
+ * @param {boolean} params.isAdmin - Whether the user is a server admin
  * @returns {boolean}
  */
-function isUserAllowed({ userId, username, roleIds = [], isAdmin = false }) {
-    const config = loadConfig();
-    
-    // Admins are always allowed if allowAdmins is true
+function isUserAllowed({ plugin, userId, username, roleIds = [], isAdmin = false }) {
+    let config = loadConfig();
+    config = migratePermissions(config);
+
     if (config.allowAdmins && isAdmin) {
         return true;
     }
-    
-    const permissions = config.alertPermissions || [];
-    
-    // Check each permission
-    for (const permission of permissions) {
-        switch (permission.type) {
+
+    const permissions = (plugin ? config.pluginPermissions[plugin] : null) || [];
+
+    for (const perm of permissions) {
+        switch (perm.type) {
             case PERMISSION_TYPES.USER_ID:
-                if (permission.value === userId) return true;
+                if (perm.value === userId) return true;
                 break;
             case PERMISSION_TYPES.USERNAME:
-                // Case-insensitive username comparison
-                if (permission.value.toLowerCase() === username?.toLowerCase()) return true;
+                if (perm.value.toLowerCase() === username?.toLowerCase()) return true;
                 break;
             case PERMISSION_TYPES.ROLE_ID:
-                if (roleIds.includes(permission.value)) return true;
+                if (roleIds.includes(perm.value)) return true;
                 break;
         }
     }
-    
-    // Legacy whitelist check (backwards compatibility)
-    if (config.alertWhitelist && config.alertWhitelist.includes(userId)) {
-        return true;
-    }
-    
+
     return false;
 }
 
 /**
- * Adds a permission to the list
- * @param {string} type - Permission type (userId, username, roleId)
+ * Adds a permission for a specific plugin.
+ * @param {string} plugin - Plugin name
+ * @param {string} type - Permission type
  * @param {string} value - The value (ID or username)
  * @returns {Object} The created permission
  */
-function addPermission(type, value) {
+function addPermission(plugin, type, value) {
     if (!Object.values(PERMISSION_TYPES).includes(type)) {
         throw new Error(`Tipo de permissão inválido: ${type}`);
     }
-    
-    const config = loadConfig();
-    
-    if (!config.alertPermissions) {
-        config.alertPermissions = [];
+    if (!plugin) {
+        throw new Error('Nome do plugin é obrigatório');
     }
-    
-    // Check for duplicates
-    const exists = config.alertPermissions.some(
+
+    let config = loadConfig();
+    config = migratePermissions(config);
+
+    if (!config.pluginPermissions[plugin]) {
+        config.pluginPermissions[plugin] = [];
+    }
+
+    const exists = config.pluginPermissions[plugin].some(
         p => p.type === type && p.value.toLowerCase() === value.toLowerCase()
     );
-    
     if (exists) {
-        throw new Error('Esta permissão já existe');
+        throw new Error('Esta permissão já existe para este plugin');
     }
-    
+
     const permission = {
-        id: `perm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: generatePermId(),
         type,
         value,
         addedAt: new Date().toISOString()
     };
-    
-    config.alertPermissions.push(permission);
+
+    config.pluginPermissions[plugin].push(permission);
     saveConfig(config);
-    logger.info('Permission added', { type, value });
-    
+    logger.info('Permission added', { plugin, type, value });
     return permission;
 }
 
 /**
- * Removes a permission by ID or by type+value
- * Also clears all alerts for the user if it's a userId permission
- * @param {string} permissionId - Permission ID (or value for legacy support)
- * @param {string} resolvedUserId - Optional user ID resolved from username (for username permissions)
- * @returns {Object} Result with removed status, alerts cleared count, and permission info
+ * Removes a permission by ID, searching across all plugins (or a specific one).
+ * @param {string} permissionId
+ * @param {string} [plugin] - If given, only search within this plugin
+ * @param {string} [resolvedUserId] - For clearing alerts on username removal
+ * @returns {Object}
  */
-function removePermission(permissionId, resolvedUserId = null) {
+function removePermission(permissionId, plugin = null, resolvedUserId = null) {
     let config = loadConfig();
-    
-    // Run migration to ensure all permissions have IDs
-    config = migrateWhitelist(config);
-    
-    if (!config.alertPermissions) {
-        return { removed: false, alertsCleared: 0, permission: null };
-    }
-    
-    // Try to find by ID first
-    let found = config.alertPermissions.find(p => p.id === permissionId);
-    
-    // If not found by ID, try to find by value (for backwards compatibility)
-    if (!found) {
-        found = config.alertPermissions.find(p => p.value === permissionId);
-    }
-    
-    if (found) {
-        config.alertPermissions = config.alertPermissions.filter(p => p !== found);
-        saveConfig(config);
-        
-        let alertsCleared = 0;
-        
-        // If it's a userId permission, clear all alerts for that user
-        if (found.type === PERMISSION_TYPES.USER_ID) {
-            alertsCleared = alertStorage.clearUserAlerts(found.value);
-            logger.info('User alerts cleared due to permission removal', { 
-                userId: found.value, 
-                alertsCleared 
-            });
+    config = migratePermissions(config);
+
+    const pluginsToSearch = plugin
+        ? [plugin]
+        : Object.keys(config.pluginPermissions);
+
+    for (const p of pluginsToSearch) {
+        const perms = config.pluginPermissions[p] || [];
+        const found = perms.find(x => x.id === permissionId) || perms.find(x => x.value === permissionId);
+
+        if (found) {
+            config.pluginPermissions[p] = perms.filter(x => x !== found);
+            saveConfig(config);
+
+            let alertsCleared = 0;
+            if (p === 'market-alerts') {
+                if (found.type === PERMISSION_TYPES.USER_ID) {
+                    alertsCleared = alertStorage.clearUserAlerts(found.value);
+                } else if (found.type === PERMISSION_TYPES.USERNAME && resolvedUserId) {
+                    alertsCleared = alertStorage.clearUserAlerts(resolvedUserId);
+                }
+            }
+
+            logger.info('Permission removed', { plugin: p, permissionId, type: found.type, value: found.value, alertsCleared });
+            return { removed: true, alertsCleared, permission: found, plugin: p };
         }
-        // If it's a username permission and we have a resolved user ID, clear alerts
-        else if (found.type === PERMISSION_TYPES.USERNAME && resolvedUserId) {
-            alertsCleared = alertStorage.clearUserAlerts(resolvedUserId);
-            logger.info('User alerts cleared due to username permission removal', { 
-                username: found.value,
-                resolvedUserId, 
-                alertsCleared 
-            });
-        }
-        
-        logger.info('Permission removed', { 
-            permissionId, 
-            type: found.type,
-            value: found.value,
-            alertsCleared
-        });
-        
-        return { removed: true, alertsCleared, permission: found };
     }
-    
-    return { removed: false, alertsCleared: 0, permission: null };
+
+    return { removed: false, alertsCleared: 0, permission: null, plugin: null };
 }
 
 /**
- * Adds a user to the whitelist (legacy, uses new permission system)
- * @param {string} userId - Discord user ID
- * @returns {boolean} True if added (false if already exists)
+ * Gets the list of all plugin names that have permissions configured.
+ * @returns {string[]}
+ */
+function getPluginsWithPermissions() {
+    let config = loadConfig();
+    config = migratePermissions(config);
+    return Object.keys(config.pluginPermissions).filter(p => config.pluginPermissions[p].length > 0);
+}
+
+/**
+ * Legacy: adds a user to market-alerts whitelist
  */
 function addToWhitelist(userId) {
     try {
-        addPermission(PERMISSION_TYPES.USER_ID, userId);
+        addPermission('market-alerts', PERMISSION_TYPES.USER_ID, userId);
         return true;
-    } catch (error) {
+    } catch {
         return false;
     }
 }
 
 /**
- * Removes a user from the whitelist (legacy, uses new permission system)
- * @param {string} userId - Discord user ID
- * @returns {boolean} True if removed
+ * Legacy: removes a user from market-alerts whitelist
  */
 function removeFromWhitelist(userId) {
-    const config = loadConfig();
-    
-    if (!config.alertPermissions) {
-        return false;
-    }
-    
-    const permission = config.alertPermissions.find(
-        p => p.type === PERMISSION_TYPES.USER_ID && p.value === userId
-    );
-    
-    if (permission) {
-        return removePermission(permission.id);
-    }
-    
+    const perms = getPermissions('market-alerts');
+    const perm = perms.find(p => p.type === PERMISSION_TYPES.USER_ID && p.value === userId);
+    if (perm) return removePermission(perm.id, 'market-alerts');
     return false;
 }
 
@@ -420,6 +404,8 @@ module.exports = {
     getRequestDelayMs,
     getAlertWhitelist,
     getAlertPermissions,
+    getPermissions,
+    getPluginsWithPermissions,
     isUserAllowed,
     addToWhitelist,
     removeFromWhitelist,

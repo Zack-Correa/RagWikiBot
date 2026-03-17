@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initParties();
     initConfig();
     initWhitelist();
+    initChangelog();
     initNews();
     initDeploy();
     initLogs();
@@ -43,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAccounts();
     loadConfig();
     loadWhitelist();
+    loadChangelog();
     loadNews();
     loadDeployStatus();
     loadLogs();
@@ -1841,13 +1843,48 @@ async function saveEnvVariables() {
 
 // Permissions
 let guildRoles = [];
+let permissionsCache = null;
 
 function initWhitelist() {
     document.getElementById('permission-add-form').addEventListener('submit', addPermission);
     document.getElementById('permission-type').addEventListener('change', onPermissionTypeChange);
-    
-    // Initial state
+    document.getElementById('permission-filter-plugin').addEventListener('change', () => {
+        if (permissionsCache) renderPermissions(permissionsCache);
+    });
+
     onPermissionTypeChange();
+    loadPluginOptions();
+}
+
+async function loadPluginOptions() {
+    try {
+        const response = await fetch('/api/plugins');
+        const result = await response.json();
+        if (!result.success) return;
+
+        const plugins = result.data.map(p => p.name);
+        const addSelect = document.getElementById('permission-plugin');
+        const filterSelect = document.getElementById('permission-filter-plugin');
+
+        const pluginLabels = {
+            'market-alerts': '📊 Alertas de Mercado',
+            'changelog-monitor': '📋 Changelog Monitor',
+            'party': '👥 Grupos/Party',
+            'shared-accounts': '🔑 Contas Compartilhadas',
+            'token-capture': '🎫 Token Capture'
+        };
+
+        addSelect.innerHTML = '<option value="">Selecione o plugin...</option>';
+        filterSelect.innerHTML = '<option value="">Todos os plugins</option>';
+
+        for (const name of plugins) {
+            const label = pluginLabels[name] || name;
+            addSelect.innerHTML += `<option value="${name}">${label}</option>`;
+            filterSelect.innerHTML += `<option value="${name}">${label}</option>`;
+        }
+    } catch (error) {
+        console.error('Error loading plugin options:', error);
+    }
 }
 
 function onPermissionTypeChange() {
@@ -1855,11 +1892,11 @@ function onPermissionTypeChange() {
     const valueInput = document.getElementById('permission-value');
     const helpText = document.getElementById('permission-help-text');
     const roleSelector = document.getElementById('role-selector-container');
-    
+
     switch (type) {
         case 'userId':
             valueInput.placeholder = 'Ex: 123456789012345678';
-            helpText.textContent = 'Digite o ID numérico do usuário Discord (clique com botão direito no usuário → Copiar ID)';
+            helpText.textContent = 'Digite o ID numérico do usuário Discord';
             roleSelector.style.display = 'none';
             break;
         case 'username':
@@ -1879,29 +1916,25 @@ function onPermissionTypeChange() {
 async function loadGuildRoles() {
     const container = document.getElementById('role-selector');
     container.innerHTML = '<div class="loading">Carregando cargos...</div>';
-    
+
     try {
         const response = await fetch('/api/guilds/roles');
         const result = await response.json();
-        
         if (result.success) {
             guildRoles = result.data.guilds;
             renderRoleSelector(guildRoles);
         }
     } catch (error) {
-        console.error('Error loading roles:', error);
         container.innerHTML = '<div class="loading">Erro ao carregar cargos</div>';
     }
 }
 
 function renderRoleSelector(guilds) {
     const container = document.getElementById('role-selector');
-    
     if (guilds.length === 0) {
         container.innerHTML = '<div class="loading">Nenhum servidor encontrado</div>';
         return;
     }
-    
     container.innerHTML = guilds.map(guild => `
         <div class="guild-section">
             <div class="guild-name">
@@ -1933,31 +1966,47 @@ async function loadPermissions() {
     try {
         const response = await fetch('/api/permissions');
         const result = await response.json();
-        
+
         if (result.success) {
-            renderPermissions(result.data.permissions);
+            permissionsCache = result.data.permissions;
+            renderPermissions(permissionsCache);
         }
     } catch (error) {
         console.error('Error loading permissions:', error);
-        showToast('Erro ao carregar permissões', 'error');
     }
 }
 
 function renderPermissions(permissions) {
     const container = document.getElementById('permissions-grid');
-    
-    if (permissions.length === 0) {
-        container.innerHTML = '<div class="permissions-empty">Nenhuma permissão configurada. Adicione usuários ou cargos acima.</div>';
+    const filterPlugin = document.getElementById('permission-filter-plugin').value;
+
+    let filtered = permissions;
+    if (filterPlugin) {
+        filtered = permissions.filter(p => p.plugin === filterPlugin);
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="permissions-empty">Nenhuma permissão configurada' +
+            (filterPlugin ? ' para este plugin' : '') + '. Adicione usuários ou cargos acima.</div>';
         return;
     }
-    
-    container.innerHTML = permissions.map(perm => {
+
+    const typeLabels = { 'userId': 'ID do Usuário', 'username': 'Nome de Usuário', 'roleId': 'Cargo' };
+    const pluginLabels = {
+        'market-alerts': '📊 Alertas',
+        'changelog-monitor': '📋 Changelog',
+        'party': '👥 Grupos',
+        'shared-accounts': '🔑 Contas',
+        'token-capture': '🎫 Token'
+    };
+
+    container.innerHTML = filtered.map(perm => {
         const info = perm.resolvedInfo || {};
         let icon, name, value;
-        
+
         switch (perm.type) {
             case 'userId':
-                icon = info.avatar 
+                icon = info.avatar
                     ? `<img src="${info.avatar}" class="user-avatar" style="width: 48px; height: 48px;">`
                     : '👤';
                 name = info.displayName || perm.value;
@@ -1969,20 +2018,18 @@ function renderPermissions(permissions) {
                 value = 'Nome de usuário';
                 break;
             case 'roleId':
-                icon = info.color 
+                icon = info.color
                     ? `<span style="background: ${info.color}; width: 24px; height: 24px; border-radius: 4px; display: inline-block;"></span>`
                     : '🏷️';
                 name = info.name || perm.value;
                 value = info.guildName ? `${info.guildName} • ID: ${perm.value}` : `ID: ${perm.value}`;
                 break;
         }
-        
-        const typeLabels = {
-            'userId': 'ID do Usuário',
-            'username': 'Nome de Usuário', 
-            'roleId': 'Cargo'
-        };
-        
+
+        const pluginBadge = perm.plugin
+            ? `<span class="perm-plugin-badge">${pluginLabels[perm.plugin] || perm.plugin}</span>`
+            : '';
+
         return `
             <div class="permission-card type-${perm.type}">
                 <div class="permission-icon">${icon}</div>
@@ -1990,6 +2037,7 @@ function renderPermissions(permissions) {
                     <span class="perm-name">${escapeHtml(name)}</span>
                     <span class="perm-type">${typeLabels[perm.type]}</span>
                     <span class="perm-value">${escapeHtml(value)}</span>
+                    ${pluginBadge}
                 </div>
                 <button class="btn-remove" onclick="removePermission('${perm.id}')">Remover</button>
             </div>
@@ -1999,24 +2047,29 @@ function renderPermissions(permissions) {
 
 async function addPermission(e) {
     e.preventDefault();
-    
+
+    const plugin = document.getElementById('permission-plugin').value;
     const type = document.getElementById('permission-type').value;
     const value = document.getElementById('permission-value').value.trim();
-    
+
+    if (!plugin) {
+        showToast('Selecione um plugin', 'error');
+        return;
+    }
     if (!value) {
         showToast('Digite um valor', 'error');
         return;
     }
-    
+
     try {
         const response = await fetch('/api/permissions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type, value })
+            body: JSON.stringify({ plugin, type, value })
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
             showToast('Permissão adicionada!', 'success');
             document.getElementById('permission-value').value = '';
@@ -2025,20 +2078,17 @@ async function addPermission(e) {
             showToast(result.error || 'Erro ao adicionar permissão', 'error');
         }
     } catch (error) {
-        console.error('Error adding permission:', error);
         showToast('Erro ao adicionar permissão', 'error');
     }
 }
 
 async function removePermission(permissionId) {
-    if (!confirm('Tem certeza que deseja remover esta permissão?')) {
-        return;
-    }
-    
+    if (!confirm('Tem certeza que deseja remover esta permissão?')) return;
+
     try {
         const response = await fetch(`/api/permissions/${permissionId}`, { method: 'DELETE' });
         const result = await response.json();
-        
+
         if (result.success) {
             showToast('Permissão removida!', 'success');
             loadPermissions();
@@ -2046,15 +2096,321 @@ async function removePermission(permissionId) {
             showToast(result.error || 'Erro ao remover permissão', 'error');
         }
     } catch (error) {
-        console.error('Error removing permission:', error);
         showToast('Erro ao remover permissão', 'error');
     }
 }
 
-// Legacy function for backwards compatibility
+// Legacy
 async function removeFromWhitelist(userId) {
     await removePermission(userId);
 }
+
+// ==================== CHANGELOG MONITOR ====================
+
+function initChangelog() {
+    document.getElementById('btn-cl-check').addEventListener('click', changelogForceCheck);
+    document.getElementById('btn-cl-reload').addEventListener('click', loadChangelog);
+    document.getElementById('btn-cl-view-cache').addEventListener('click', openCacheModal);
+    document.getElementById('btn-cl-clear-cache').addEventListener('click', changelogClearCache);
+    document.getElementById('btn-cl-clear-topics').addEventListener('click', changelogClearTopics);
+    document.getElementById('btn-cl-close-modal').addEventListener('click', closeCacheModal);
+    document.getElementById('cl-generate-form').addEventListener('submit', changelogGenerate);
+
+    document.querySelectorAll('.cl-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.cl-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            const target = tab.getAttribute('data-tab');
+            document.getElementById('cl-modal-pages').style.display = target === 'pages' ? '' : 'none';
+            document.getElementById('cl-modal-markdown').style.display = target === 'markdown' ? '' : 'none';
+        });
+    });
+}
+
+async function loadChangelog() {
+    try {
+        const response = await fetch('/api/changelog/status');
+        const result = await response.json();
+
+        if (!result.success) {
+            document.getElementById('cl-running').textContent = 'Plugin desabilitado';
+            return;
+        }
+
+        const d = result.data;
+        document.getElementById('cl-running').textContent = d.running ? '✅ Sim' : '❌ Não';
+        document.getElementById('cl-interval').textContent = d.intervalMinutes ? `${d.intervalMinutes} min` : '-';
+        document.getElementById('cl-last-check').textContent = d.lastCheck ? formatTimeAgo(new Date(d.lastCheck)) : 'Nunca';
+        document.getElementById('cl-processed-count').textContent = d.processedCount || 0;
+        document.getElementById('cl-autopost').textContent = d.config?.autoPost ? '✅ Sim' : '❌ Não';
+        document.getElementById('cl-guild-count').textContent = d.guildCount || 0;
+
+        document.getElementById('cl-cache-has').textContent = d.hasCache ? '✅ Sim' : '❌ Não';
+        document.getElementById('cl-cache-topic').textContent = d.cacheTopicId || '-';
+        document.getElementById('cl-cache-date').textContent = d.cacheGeneratedAt ? formatTimeAgo(new Date(d.cacheGeneratedAt)) : '-';
+        document.getElementById('cl-cache-pages').textContent = d.cachePagesCount || 0;
+
+        document.getElementById('btn-cl-view-cache').disabled = !d.hasCache;
+        document.getElementById('btn-cl-clear-cache').disabled = !d.hasCache;
+
+        loadChangelogTopics();
+        loadChangelogChannels();
+    } catch (error) {
+        console.error('Error loading changelog status:', error);
+    }
+}
+
+async function loadChangelogTopics() {
+    try {
+        const response = await fetch('/api/changelog/topics');
+        const result = await response.json();
+
+        if (!result.success) return;
+
+        const topics = result.data;
+        const container = document.getElementById('cl-topics-list');
+        const entries = Object.entries(topics);
+
+        if (entries.length === 0) {
+            container.innerHTML = '<div class="empty-state">Nenhum tópico processado ainda.</div>';
+            return;
+        }
+
+        entries.sort((a, b) => new Date(b[1].processedAt) - new Date(a[1].processedAt));
+
+        container.innerHTML = entries.map(([id, data]) => `
+            <div class="cl-topic-item">
+                <div class="cl-topic-title">
+                    ${data.url ? `<a href="${data.url}" target="_blank">${data.title || `Topic #${id}`}</a>` : (data.title || `Topic #${id}`)}
+                </div>
+                <div class="cl-topic-meta">
+                    <div>${data.date || ''}</div>
+                    <div>${data.source === 'llm' ? '🤖 LLM' : '📝 Template'}</div>
+                    <div>${formatTimeAgo(new Date(data.processedAt))}</div>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading changelog topics:', error);
+    }
+}
+
+async function loadChangelogChannels() {
+    try {
+        const response = await fetch('/api/changelog/channels');
+        const result = await response.json();
+
+        if (!result.success) return;
+
+        const container = document.getElementById('cl-channels-list');
+        const entries = result.data;
+
+        if (entries.length === 0) {
+            container.innerHTML = '<div class="empty-state">Nenhum servidor configurado. Use <code>/changelog canal</code> em cada servidor.</div>';
+            return;
+        }
+
+        container.innerHTML = entries.map(e => `
+            <div class="cl-topic-item">
+                <div class="cl-topic-title">
+                    <strong>${escapeHtml(e.guildName)}</strong>
+                    <span style="color:var(--text-secondary);font-size:13px;margin-left:8px;">${escapeHtml(e.channelName)}</span>
+                </div>
+                <div class="cl-topic-meta">
+                    <div style="font-size:11px;color:var(--text-secondary);">${e.guildId}</div>
+                    <button class="btn btn-danger btn-sm" onclick="removeChangelogChannel('${e.guildId}')" title="Remover canal">✕</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading changelog channels:', error);
+    }
+}
+
+async function removeChangelogChannel(guildId) {
+    if (!confirm('Remover o canal de changelog deste servidor?')) return;
+
+    try {
+        const response = await fetch(`/api/changelog/channels/${guildId}`, { method: 'DELETE' });
+        const result = await response.json();
+
+        if (result.success) {
+            showToast('Canal removido!', 'success');
+            loadChangelog();
+        } else {
+            showToast(result.error || 'Erro ao remover', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao remover canal', 'error');
+    }
+}
+
+async function changelogForceCheck() {
+    const btn = document.getElementById('btn-cl-check');
+    btn.disabled = true;
+    btn.textContent = 'Verificando...';
+
+    try {
+        const response = await fetch('/api/changelog/check', { method: 'POST' });
+        const result = await response.json();
+
+        if (result.success) {
+            showToast('Verificação de changelogs iniciada!', 'success');
+            setTimeout(loadChangelog, 3000);
+        } else {
+            showToast(result.error || 'Erro na verificação', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking changelogs:', error);
+        showToast('Erro ao verificar changelogs', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verificar Agora';
+    }
+}
+
+async function changelogClearCache() {
+    if (!confirm('Limpar o cache do último changelog?')) return;
+
+    try {
+        const response = await fetch('/api/changelog/cache', { method: 'DELETE' });
+        const result = await response.json();
+
+        if (result.success) {
+            showToast('Cache limpo!', 'success');
+            loadChangelog();
+        } else {
+            showToast(result.error || 'Erro ao limpar cache', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao limpar cache', 'error');
+    }
+}
+
+async function changelogClearTopics() {
+    if (!confirm('Limpar todos os tópicos processados? O monitor poderá reprocessar changelogs antigos.')) return;
+
+    try {
+        const response = await fetch('/api/changelog/topics', { method: 'DELETE' });
+        const result = await response.json();
+
+        if (result.success) {
+            showToast('Tópicos processados limpos!', 'success');
+            loadChangelog();
+        } else {
+            showToast(result.error || 'Erro ao limpar tópicos', 'error');
+        }
+    } catch (error) {
+        showToast('Erro ao limpar tópicos', 'error');
+    }
+}
+
+async function changelogGenerate(e) {
+    e.preventDefault();
+    const url = document.getElementById('cl-generate-url').value.trim();
+    if (!url) return;
+
+    const btn = e.target.querySelector('button[type="submit"]');
+    const resultDiv = document.getElementById('cl-generate-result');
+    btn.disabled = true;
+    btn.textContent = 'Gerando...';
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<div class="loading">Processando changelog... Isso pode levar alguns segundos.</div>';
+
+    try {
+        const response = await fetch('/api/changelog/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            const d = result.data;
+            resultDiv.innerHTML = `
+                <div style="margin-bottom:10px;">
+                    <strong>Fonte:</strong> ${d.source === 'llm' ? '🤖 LLM' : '📝 Template'} |
+                    <strong>Páginas:</strong> ${d.pagesCount} |
+                    <strong>Itens novos:</strong> ${d.stats?.addedItems || 0} |
+                    <strong>Skills novas:</strong> ${d.stats?.addedSkills || 0} |
+                    <strong>Combos:</strong> ${d.stats?.addedCombis || 0}
+                </div>
+                <details>
+                    <summary style="cursor:pointer;color:var(--accent);">Ver Markdown gerado</summary>
+                    <pre>${escapeHtml(d.markdown || 'Sem markdown')}</pre>
+                </details>
+            `;
+            showToast('Resumo gerado com sucesso!', 'success');
+            loadChangelog();
+        } else {
+            resultDiv.innerHTML = `<span style="color:var(--danger);">${result.error || 'Erro desconhecido'}</span>`;
+            showToast(result.error || 'Erro ao gerar resumo', 'error');
+        }
+    } catch (error) {
+        console.error('Error generating changelog:', error);
+        resultDiv.innerHTML = '<span style="color:var(--danger);">Erro de conexão</span>';
+        showToast('Erro ao gerar resumo', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Gerar Resumo';
+    }
+}
+
+async function openCacheModal() {
+    const modal = document.getElementById('cl-cache-modal');
+    const pagesDiv = document.getElementById('cl-modal-pages');
+    const mdDiv = document.getElementById('cl-modal-markdown');
+
+    pagesDiv.innerHTML = '<div class="loading">Carregando...</div>';
+    mdDiv.innerHTML = '';
+    modal.style.display = 'flex';
+
+    try {
+        const response = await fetch('/api/changelog/cache');
+        const result = await response.json();
+
+        if (!result.success || !result.data) {
+            pagesDiv.innerHTML = '<div class="empty-state">Sem cache disponível.</div>';
+            return;
+        }
+
+        const data = result.data;
+
+        if (data.pages && data.pages.length > 0) {
+            pagesDiv.innerHTML = data.pages.map((page, i) => `
+                <div class="cl-page-card">
+                    <div class="cl-page-title">Página ${i + 1}/${data.pages.length}${page.title ? ` — ${escapeHtml(page.title)}` : ''}</div>
+                    ${page.description ? `<div class="cl-page-desc">${escapeHtml(page.description)}</div>` : ''}
+                    ${(page.fields || []).map(f => `
+                        <div class="cl-page-field">
+                            <div class="cl-page-field-name">${escapeHtml(f.name)}</div>
+                            <div class="cl-page-field-value">${escapeHtml(f.value)}</div>
+                        </div>
+                    `).join('')}
+                    ${page.footer ? `<div style="color:var(--text-secondary);font-size:12px;margin-top:8px;">${escapeHtml(typeof page.footer === 'string' ? page.footer : page.footer.text || '')}</div>` : ''}
+                </div>
+            `).join('');
+        } else {
+            pagesDiv.innerHTML = '<div class="empty-state">Nenhuma página no cache.</div>';
+        }
+
+        mdDiv.innerHTML = data.markdown
+            ? `<div class="cl-markdown-content">${escapeHtml(data.markdown)}</div>`
+            : '<div class="empty-state">Sem markdown disponível.</div>';
+    } catch (error) {
+        console.error('Error loading cache:', error);
+        pagesDiv.innerHTML = '<span style="color:var(--danger);">Erro ao carregar cache</span>';
+    }
+}
+
+function closeCacheModal() {
+    document.getElementById('cl-cache-modal').style.display = 'none';
+}
+
+document.addEventListener('click', (e) => {
+    const modal = document.getElementById('cl-cache-modal');
+    if (e.target === modal) closeCacheModal();
+});
 
 // News Section
 function initNews() {

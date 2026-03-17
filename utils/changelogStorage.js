@@ -13,6 +13,7 @@ let cache = {
     processedTopics: {},
     lastCheck: null,
     lastChangelog: null,
+    channels: {},
     config: {
         channelId: null,
         serverFilter: 'LATAM',
@@ -29,8 +30,13 @@ function load() {
                 processedTopics: parsed.processedTopics || {},
                 lastCheck: parsed.lastCheck || null,
                 lastChangelog: parsed.lastChangelog || null,
+                channels: parsed.channels || {},
                 config: { ...cache.config, ...parsed.config }
             };
+            // Migrate legacy single channelId into per-guild map
+            if (cache.config.channelId && Object.keys(cache.channels).length === 0) {
+                cache.channels['_legacy'] = cache.config.channelId;
+            }
             logger.debug('Changelog cache loaded', {
                 topicCount: Object.keys(cache.processedTopics).length
             });
@@ -134,10 +140,10 @@ function getStats() {
  * @param {Object} data - { topicId, topicMeta, pages, markdown, generatedAt }
  */
 function setLastChangelog(data) {
-    cache.lastChangelog = {
+    cache.lastChangelog = data ? {
         ...data,
         generatedAt: data.generatedAt || new Date().toISOString()
-    };
+    } : null;
     save();
 }
 
@@ -157,6 +163,42 @@ function clearProcessed() {
     save();
 }
 
+/**
+ * Sets the changelog channel for a specific guild.
+ * @param {string} guildId
+ * @param {string} channelId
+ */
+function setGuildChannel(guildId, channelId) {
+    cache.channels[guildId] = channelId;
+    save();
+}
+
+/**
+ * Removes the changelog channel for a specific guild.
+ * @param {string} guildId
+ */
+function removeGuildChannel(guildId) {
+    delete cache.channels[guildId];
+    save();
+}
+
+/**
+ * Gets all configured guild→channel mappings.
+ * @returns {Object} guildId→channelId map
+ */
+function getGuildChannels() {
+    return { ...cache.channels };
+}
+
+/**
+ * Gets the channel ID for a specific guild.
+ * @param {string} guildId
+ * @returns {string|null}
+ */
+function getGuildChannel(guildId) {
+    return cache.channels[guildId] || null;
+}
+
 module.exports = {
     isProcessed,
     markProcessed,
@@ -168,5 +210,9 @@ module.exports = {
     getStats,
     clearProcessed,
     setLastChangelog,
-    getLastChangelog
+    getLastChangelog,
+    setGuildChannel,
+    removeGuildChannel,
+    getGuildChannels,
+    getGuildChannel
 };

@@ -4,7 +4,7 @@
 	"description": "Discord bot for searching Ragnarok Online items, quests, and information from various wikis and databases",
 	"main": "app.js",
 	"scripts": {
-		"start": "node app.js",
+		"start": "node --max-old-space-size=460 app.js",
 		"dev": "node app.js",
 		"deploy": "node scripts/deploy-commands.js",
 		"reset": "node scripts/reset-commands.js",

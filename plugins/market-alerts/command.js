@@ -94,6 +94,7 @@ module.exports = {
         const roleIds = interaction.member.roles.cache.map(role => role.id);
         
         const isAllowed = configStorage.isUserAllowed({
+            plugin: 'market-alerts',
             userId: interaction.user.id,
             username: interaction.user.username,
             roleIds,

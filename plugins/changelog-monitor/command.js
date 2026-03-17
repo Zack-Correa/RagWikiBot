@@ -6,6 +6,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const dpForum = require('../../integrations/database/divine-pride-forum');
 const changelogStorage = require('../../utils/changelogStorage');
+const configStorage = require('../../utils/configStorage');
 const summaryGenerator = require('./summaryGenerator');
 const llmService = require('../../services/llmService');
 const logger = require('../../utils/logger');
@@ -54,6 +55,24 @@ const data = new SlashCommandBuilder()
     );
 
 async function execute(interaction) {
+    const isAdmin = interaction.member?.permissions?.has(PermissionFlagsBits.Administrator);
+    const roleIds = interaction.member?.roles?.cache?.map(r => r.id) || [];
+
+    const isAllowed = configStorage.isUserAllowed({
+        plugin: 'changelog-monitor',
+        userId: interaction.user.id,
+        username: interaction.user.username,
+        roleIds,
+        isAdmin
+    });
+
+    if (!isAllowed) {
+        return interaction.reply({
+            content: '❌ Você não tem permissão para usar este comando.',
+            ephemeral: true
+        });
+    }
+
     const subcommand = interaction.options.getSubcommand();
 
     switch (subcommand) {
@@ -135,6 +154,7 @@ async function handleLatest(interaction) {
         }
 
         const parsed = dpForum.parseChangelogHTML(content.html);
+        content.html = null;
         await dpForum.deduplicateChangelog(parsed);
 
         let analysis = null;
@@ -149,7 +169,6 @@ async function handleLatest(interaction) {
         const pages = summaryGenerator.buildChangelogEmbeds(parsed, latest, analysis);
         const templateMarkdown = summaryGenerator.generateSummary(parsed, latest);
 
-        // Cache the result
         changelogStorage.setLastChangelog({
             topicId: latest.topicId,
             topicMeta: latest,
@@ -194,10 +213,14 @@ async function handleCheck(interaction) {
 async function handleStatus(interaction) {
     const stats = changelogStorage.getStats();
     const llmConfig = llmService.getConfig();
+    const guildChannelId = changelogStorage.getGuildChannel(interaction.guildId);
 
     const llmStatus = llmConfig.available
         ? `✅ ${llmConfig.provider} (${llmConfig.model})`
         : '❌ Não configurado';
+
+    const allChannels = changelogStorage.getGuildChannels();
+    const totalGuilds = Object.keys(allChannels).length;
 
     const embed = new EmbedBuilder()
         .setColor('#0099ff')
@@ -207,7 +230,8 @@ async function handleStatus(interaction) {
             { name: 'Última verificação', value: stats.lastCheck || 'Nunca', inline: true },
             { name: 'Servidor filtrado', value: stats.config.serverFilter || 'LATAM', inline: true },
             { name: 'Auto-post', value: stats.config.autoPost ? '✅ Ativado' : '❌ Desativado', inline: true },
-            { name: 'Canal', value: stats.config.channelId ? `<#${stats.config.channelId}>` : 'Não definido', inline: true },
+            { name: 'Canal (este servidor)', value: guildChannelId ? `<#${guildChannelId}>` : 'Não definido', inline: true },
+            { name: 'Servidores configurados', value: `${totalGuilds}`, inline: true },
             { name: '🤖 LLM', value: llmStatus, inline: true }
         )
         .setTimestamp()
@@ -222,9 +246,11 @@ async function handleSetChannel(interaction) {
     }
 
     const channel = interaction.options.getChannel('canal');
-    changelogStorage.setConfig({ channelId: channel.id });
+    const guildId = interaction.guildId;
 
-    await interaction.reply(`Canal de changelog definido para ${channel}. Novos changelogs LATAM serão postados automaticamente.`);
+    changelogStorage.setGuildChannel(guildId, channel.id);
+
+    await interaction.reply(`Canal de changelog deste servidor definido para ${channel}. Novos changelogs LATAM serão postados automaticamente aqui.`);
 }
 
 async function handleGenerate(interaction) {
@@ -244,6 +270,7 @@ async function handleGenerate(interaction) {
         }
 
         const parsed = dpForum.parseChangelogHTML(content.html);
+        content.html = null;
         await dpForum.deduplicateChangelog(parsed);
 
         const topicMeta = {

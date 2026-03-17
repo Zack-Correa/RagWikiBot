@@ -20,6 +20,7 @@
             <a href="#parties" class="nav-link" data-section="parties">Grupos</a>
             <a href="#config" class="nav-link" data-section="config">Configurações</a>
             <a href="#whitelist" class="nav-link" data-section="whitelist">Permissões</a>
+            <a href="#changelog" class="nav-link" data-section="changelog">Changelog</a>
             <a href="#news" class="nav-link" data-section="news">Notícias</a>
             <a href="#deploy" class="nav-link" data-section="deploy">Deploy</a>
             <a href="#logs" class="nav-link" data-section="logs">Logs</a>
@@ -623,12 +624,15 @@
 
         <!-- Permissions Section -->
         <section id="whitelist" class="section">
-            <h2>Permissões de Alertas</h2>
+            <h2>Permissões por Plugin</h2>
             
             <div class="permissions-add-card">
                 <h3>Adicionar Permissão</h3>
                 <form id="permission-add-form">
                     <div class="form-row permission-form-row">
+                        <select id="permission-plugin" class="permission-plugin-select">
+                            <option value="">Selecione o plugin...</option>
+                        </select>
                         <select id="permission-type" class="permission-type-select">
                             <option value="userId">ID do Usuário</option>
                             <option value="username">Nome de Usuário</option>
@@ -637,7 +641,7 @@
                         <input type="text" id="permission-value" placeholder="Digite o valor..." required>
                         <button type="submit" class="btn btn-primary">Adicionar</button>
                     </div>
-                    <small id="permission-help-text">Digite o ID numérico do usuário Discord</small>
+                    <small id="permission-help-text">Selecione o plugin e o tipo de permissão</small>
                 </form>
                 
                 <!-- Role selector (hidden by default) -->
@@ -647,6 +651,13 @@
                         <div class="loading">Carregando cargos...</div>
                     </div>
                 </div>
+            </div>
+
+            <div class="permissions-filter-card">
+                <label for="permission-filter-plugin">Filtrar por plugin:</label>
+                <select id="permission-filter-plugin" class="permission-plugin-select">
+                    <option value="">Todos os plugins</option>
+                </select>
             </div>
             
             <div class="permissions-list">
@@ -658,6 +669,113 @@
                 </div>
                 <div id="permissions-grid" class="permissions-grid">
                     <div class="loading">Carregando...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Changelog Section -->
+        <section id="changelog" class="section">
+            <h2>📋 Changelog Monitor</h2>
+
+            <div class="changelog-status-card">
+                <h3>Status do Monitor</h3>
+                <div class="changelog-status-info">
+                    <div class="info-row">
+                        <span class="info-label">Monitor ativo:</span>
+                        <span class="info-value" id="cl-running">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Intervalo:</span>
+                        <span class="info-value" id="cl-interval">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Última verificação:</span>
+                        <span class="info-value" id="cl-last-check">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Tópicos processados:</span>
+                        <span class="info-value" id="cl-processed-count">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Auto-post:</span>
+                        <span class="info-value" id="cl-autopost">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Servidores com canal:</span>
+                        <span class="info-value" id="cl-guild-count">-</span>
+                    </div>
+                </div>
+                <div class="changelog-actions">
+                    <button class="btn btn-primary" id="btn-cl-check">Verificar Agora</button>
+                    <button class="btn btn-secondary" id="btn-cl-reload">Recarregar Status</button>
+                </div>
+            </div>
+
+            <div class="changelog-channels-card">
+                <h3>Canais por Servidor</h3>
+                <div id="cl-channels-list" class="changelog-topics-list">
+                    <div class="loading">Carregando...</div>
+                </div>
+            </div>
+
+            <div class="changelog-cache-card">
+                <h3>Cache do Último Changelog</h3>
+                <div class="changelog-cache-info">
+                    <div class="info-row">
+                        <span class="info-label">Em cache:</span>
+                        <span class="info-value" id="cl-cache-has">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Tópico:</span>
+                        <span class="info-value" id="cl-cache-topic">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Gerado em:</span>
+                        <span class="info-value" id="cl-cache-date">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Páginas:</span>
+                        <span class="info-value" id="cl-cache-pages">-</span>
+                    </div>
+                </div>
+                <div class="changelog-actions">
+                    <button class="btn btn-secondary" id="btn-cl-view-cache">Ver Conteúdo</button>
+                    <button class="btn btn-danger" id="btn-cl-clear-cache">Limpar Cache</button>
+                </div>
+            </div>
+
+            <div class="changelog-generate-card">
+                <h3>Gerar Manualmente</h3>
+                <p class="deploy-description">Insira a URL de um tópico do Divine Pride para gerar o resumo.</p>
+                <form id="cl-generate-form" class="changelog-generate-form">
+                    <input type="text" id="cl-generate-url" placeholder="https://www.divine-pride.net/forum/index.php?/topic/..." class="input-full" required>
+                    <button type="submit" class="btn btn-primary">Gerar Resumo</button>
+                </form>
+                <div id="cl-generate-result" class="changelog-generate-result" style="display:none;"></div>
+            </div>
+
+            <div class="changelog-topics-card">
+                <h3>Tópicos Processados</h3>
+                <div class="changelog-actions" style="margin-bottom: 10px;">
+                    <button class="btn btn-danger btn-sm" id="btn-cl-clear-topics">Limpar Histórico</button>
+                </div>
+                <div id="cl-topics-list" class="changelog-topics-list">
+                    <div class="loading">Carregando...</div>
+                </div>
+            </div>
+
+            <div id="cl-cache-modal" class="changelog-modal" style="display:none;">
+                <div class="changelog-modal-content">
+                    <div class="changelog-modal-header">
+                        <h3>Conteúdo em Cache</h3>
+                        <button class="btn btn-sm btn-secondary" id="btn-cl-close-modal">&times;</button>
+                    </div>
+                    <div class="changelog-modal-tabs">
+                        <button class="btn btn-sm btn-primary cl-tab active" data-tab="pages">Páginas (Embeds)</button>
+                        <button class="btn btn-sm btn-secondary cl-tab" data-tab="markdown">Markdown</button>
+                    </div>
+                    <div id="cl-modal-pages" class="changelog-modal-body"></div>
+                    <div id="cl-modal-markdown" class="changelog-modal-body" style="display:none;"></div>
                 </div>
             </div>
         </section>

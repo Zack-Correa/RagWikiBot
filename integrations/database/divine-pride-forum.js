@@ -61,6 +61,7 @@ async function fetchChangelogTopics(serverFilter = 'LATAM') {
         });
 
         const $ = cheerio.load(response.data);
+        response.data = null;
         const topics = [];
         const filterLower = serverFilter.toLowerCase();
 
@@ -134,7 +135,7 @@ async function fetchChangelogTopics(serverFilter = 'LATAM') {
 /**
  * Fetches the raw HTML content of a changelog topic post
  * @param {string} topicUrl - Full URL to the topic
- * @returns {Promise<{html: string, $post: CheerioAPI}|null>}
+ * @returns {Promise<{html: string}|null>}
  */
 async function fetchTopicContent(topicUrl) {
     try {
@@ -146,6 +147,7 @@ async function fetchTopicContent(topicUrl) {
         });
 
         const $ = cheerio.load(response.data);
+        response.data = null;
         const postContent = $('[data-role="commentContent"]').first();
 
         if (!postContent.length) {
@@ -153,12 +155,9 @@ async function fetchTopicContent(topicUrl) {
             return null;
         }
 
-        return {
-            html: postContent.html(),
-            text: postContent.text(),
-            $: $,
-            $post: postContent
-        };
+        const html = postContent.html();
+
+        return { html };
     } catch (error) {
         logger.error('Error fetching topic content', { url: topicUrl, error: error.message });
         return null;
@@ -190,8 +189,6 @@ function parseChangelogHTML(html) {
 
         const items = [];
         const contentHtml = $contents.html();
-
-        // Split by "Id: (XXXX)" pattern to get individual item entries
         const idBlocks = contentHtml.split(/(?=Id:\s*\(\d+\))/);
 
         for (const block of idBlocks) {
@@ -199,28 +196,26 @@ function parseChangelogHTML(html) {
             if (!idMatch) continue;
 
             const itemId = idMatch[1];
-            const $block = cheerio.load(`<div>${block}</div>`);
 
-            // Extract item link and name
-            const $link = $block('a[href*="/database/item/"]').first();
-            const itemName = $link.find('b').text().trim() || $link.text().trim();
-            const itemUrl = $link.attr('href') || '';
+            const linkMatch = block.match(/<a[^>]*href="([^"]*\/database\/item\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+            let itemUrl = linkMatch ? linkMatch[1] : '';
+            const linkInner = linkMatch ? linkMatch[2] : '';
+            const boldMatch = linkInner.match(/<b>([\s\S]*?)<\/b>/i);
+            const itemName = boldMatch ? boldMatch[1].trim() : linkInner.replace(/<[^>]+>/g, '').trim();
 
-            // Extract description text (everything between the name and the "====== auto-parsed ======")
-            const blockText = $block.root().text();
-            const autoParsedIdx = blockText.indexOf('====== auto-parsed ======');
+            const plainText = block.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+            const autoParsedIdx = plainText.indexOf('====== auto-parsed ======');
             let description = '';
-            if (autoParsedIdx > -1) {
-                const afterId = blockText.indexOf(itemName);
+            if (autoParsedIdx > -1 && itemName) {
+                const afterId = plainText.indexOf(itemName);
                 if (afterId > -1) {
-                    description = blockText.substring(afterId + itemName.length, autoParsedIdx).trim();
+                    description = plainText.substring(afterId + itemName.length, autoParsedIdx).trim();
                 }
             }
 
-            // Extract type info from auto-parsed section
             const typeInfo = {};
-            const autoParsed = autoParsedIdx > -1 ? blockText.substring(autoParsedIdx) : '';
-            const typeMatches = autoParsed.matchAll(/(\w[\w\s]+?)\s*:\s*(.+)/g);
+            const autoParsed = autoParsedIdx > -1 ? plainText.substring(autoParsedIdx) : '';
+            const typeMatches = autoParsed.matchAll(/(\w[\w\s]+?)\s*:\s*(.+?)(?=\s+\w[\w\s]+?:|$)/g);
             for (const m of typeMatches) {
                 typeInfo[m[1].trim()] = m[2].trim();
             }
@@ -252,13 +247,13 @@ function parseChangelogHTML(html) {
             if (!idMatch) continue;
 
             const skillId = idMatch[1];
-            const $block = cheerio.load(`<div>${block}</div>`);
-            const $link = $block('a[href*="/database/skill/"]').first();
-            const skillName = $link.find('b').text().trim() || $link.text().trim() || '';
-            const blockText = $block.root().text();
+            const linkMatch = block.match(/<a[^>]*href="[^"]*\/database\/skill\/[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
+            const linkInner = linkMatch ? linkMatch[1] : '';
+            const boldMatch = linkInner.match(/<b>([\s\S]*?)<\/b>/i);
+            const skillName = boldMatch ? boldMatch[1].trim() : linkInner.replace(/<[^>]+>/g, '').trim();
 
-            // Extract description
-            const descMatch = blockText.match(/Description:\s*([\s\S]*?)(?=====|$)/);
+            const plainText = block.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+            const descMatch = plainText.match(/Description:\s*([\s\S]*?)(?=====|$)/);
             const description = descMatch ? descMatch[1].trim().substring(0, 300) : '';
 
             skills.push({
@@ -549,18 +544,18 @@ function deduplicateItemsByLanguage(items) {
  * Should be called after parseChangelogHTML.
  */
 const DP_LANG_COOKIES = `lang=pt; server=latam`;
-const TITLE_NAME_REGEX = /Divine Pride - (?:Item|Skill) - (.+)/;
+const TITLE_REGEX = /<title[^>]*>Divine Pride - (?:Item|Skill) - ([^<]+)<\/title>/i;
 
 /**
  * Fetches item names from the Divine Pride website in PT-BR.
- * Scrapes the <title> tag which contains the localized name.
+ * Extracts from <title> using regex (no DOM parsing) to save memory.
  * Best-effort: silently skips on errors.
  */
 async function fetchItemNames(missingIds) {
     if (missingIds.length === 0) return new Map();
 
     const results = new Map();
-    const batchSize = 5;
+    const batchSize = 3;
 
     for (let i = 0; i < missingIds.length; i += batchSize) {
         const batch = missingIds.slice(i, i + batchSize);
@@ -568,12 +563,12 @@ async function fetchItemNames(missingIds) {
             try {
                 const resp = await axios.get(`https://www.divine-pride.net/database/item/${id}/${DP_SERVER}`, {
                     headers: { ...REQUEST_HEADERS, 'Cookie': DP_LANG_COOKIES },
-                    timeout: 8000
+                    timeout: 8000,
+                    responseType: 'text'
                 });
-                const cheerioPage = cheerio.load(resp.data);
-                const title = cheerioPage('title').text().trim();
-                const match = title.match(TITLE_NAME_REGEX);
-                if (match && match[1]) results.set(id, match[1].trim());
+                const titleMatch = typeof resp.data === 'string' ? resp.data.match(TITLE_REGEX) : null;
+                resp.data = null;
+                if (titleMatch && titleMatch[1]) results.set(id, titleMatch[1].trim());
             } catch (err) {
                 logger.debug('Failed to fetch item name', { id, error: err.message });
             }
