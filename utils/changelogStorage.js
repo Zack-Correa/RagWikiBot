@@ -11,6 +11,7 @@ const STORAGE_FILE = path.join(__dirname, '../data/changelog-cache.json');
 
 let cache = {
     processedTopics: {},
+    initialized: false,
     lastCheck: null,
     lastChangelog: null,
     channels: {},
@@ -28,6 +29,7 @@ function load() {
             const parsed = JSON.parse(data);
             cache = {
                 processedTopics: parsed.processedTopics || {},
+                initialized: parsed.initialized || false,
                 lastCheck: parsed.lastCheck || null,
                 lastChangelog: parsed.lastChangelog || null,
                 channels: parsed.channels || {},
@@ -155,8 +157,17 @@ function getLastChangelog() {
     return cache.lastChangelog;
 }
 
+function isInitialized() {
+    return !!cache.initialized;
+}
+
+function setInitialized() {
+    cache.initialized = true;
+    save();
+}
+
 /**
- * Clears all processed topics (for reset)
+ * Clears all processed topics (for reset — does NOT clear initialized flag)
  */
 function clearProcessed() {
     cache.processedTopics = {};
@@ -203,6 +214,8 @@ module.exports = {
     isProcessed,
     markProcessed,
     getProcessedTopics,
+    isInitialized,
+    setInitialized,
     updateLastCheck,
     getLastCheck,
     getConfig,

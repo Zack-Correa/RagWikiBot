@@ -100,10 +100,9 @@ async function checkForNewChangelogs() {
             return;
         }
 
-        // First-run protection: if no topics have ever been processed,
-        // seed all existing topics to avoid posting old changelogs on fresh deploy
-        const processedCount = Object.keys(changelogStorage.getProcessedTopics()).length;
-        if (processedCount === 0) {
+        // First-run protection: on a fresh deploy (never initialized),
+        // seed all existing topics to avoid posting old changelogs
+        if (!changelogStorage.isInitialized()) {
             pluginLogger.info('First run detected — seeding all existing topics as already known', { count: topics.length });
             for (const topic of topics) {
                 changelogStorage.markProcessed(topic.topicId, {
@@ -113,6 +112,7 @@ async function checkForNewChangelogs() {
                     source: 'seed'
                 });
             }
+            changelogStorage.setInitialized();
             changelogStorage.updateLastCheck();
             return;
         }
