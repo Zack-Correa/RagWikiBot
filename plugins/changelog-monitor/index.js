@@ -4,7 +4,7 @@
  * parses the content, and posts contextual summaries to Discord
  */
 
-const { EmbedBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
 const dpForum = require('../../integrations/database/divine-pride-forum');
 const changelogStorage = require('../../utils/changelogStorage');
 const summaryGenerator = require('./summaryGenerator');
@@ -100,31 +100,34 @@ async function checkForNewChangelogs() {
             return;
         }
 
-        let newCount = 0;
+        const unprocessed = topics.filter(t => !changelogStorage.isProcessed(t.topicId));
 
-        for (const topic of topics) {
-            if (changelogStorage.isProcessed(topic.topicId)) {
-                continue;
-            }
-
-            pluginLogger.info('New changelog found', { title: topic.title, topicId: topic.topicId });
-            newCount++;
+        if (unprocessed.length === 0) {
+            pluginLogger.debug('No new changelogs to process');
+        } else {
+            // Topics are ordered newest-first; only post the most recent one
+            const latest = unprocessed[0];
+            pluginLogger.info('New changelog found', { title: latest.title, topicId: latest.topicId });
 
             try {
-                await processChangelog(topic, config);
+                await processChangelog(latest, config);
             } catch (error) {
                 pluginLogger.error('Error processing changelog', {
-                    topicId: topic.topicId,
+                    topicId: latest.topicId,
                     error: error.message
                 });
             }
 
-            // Only process the most recent unprocessed one per cycle
-            break;
-        }
-
-        if (newCount === 0) {
-            pluginLogger.debug('No new changelogs to process');
+            // Mark older unprocessed topics as processed without posting
+            for (let i = 1; i < unprocessed.length; i++) {
+                pluginLogger.info('Skipping older changelog (only latest is posted)', { topicId: unprocessed[i].topicId });
+                changelogStorage.markProcessed(unprocessed[i].topicId, {
+                    title: unprocessed[i].title,
+                    url: unprocessed[i].url,
+                    date: unprocessed[i].date,
+                    source: 'skipped'
+                });
+            }
         }
 
         changelogStorage.updateLastCheck();
@@ -177,11 +180,10 @@ async function processChangelog(topic, config) {
 
         if (channelIds.length > 0) {
             const embeds = summaryGenerator.buildChangelogEmbeds(parsed, topic, analysis);
-            const templateMarkdown = summaryGenerator.generateSummary(parsed, topic);
 
             for (const channelId of channelIds) {
                 try {
-                    await postToChannel(channelId, topic, embeds, templateMarkdown);
+                    await postToChannel(channelId, topic, embeds);
                 } catch (err) {
                     pluginLogger.error('Failed to post to guild channel', { channelId, error: err.message });
                 }
@@ -302,9 +304,8 @@ async function handleButtonInteraction(interaction) {
 
 /**
  * Posts a paginated embed with buttons to a channel.
- * Also attaches the full .md file.
  */
-async function postToChannel(channelId, topic, pages, templateMarkdown) {
+async function postToChannel(channelId, topic, pages) {
     try {
         const channel = await discordClient.channels.fetch(channelId);
         if (!channel) {
@@ -312,7 +313,6 @@ async function postToChannel(channelId, topic, pages, templateMarkdown) {
             return;
         }
 
-        // Send a placeholder first to get the message ID for button custom IDs
         const message = await channel.send({
             embeds: [toDiscordEmbed(pages[0])],
             components: []
@@ -320,39 +320,21 @@ async function postToChannel(channelId, topic, pages, templateMarkdown) {
 
         registerPages(message.id, pages);
 
-        // Cache this changelog for persistence
         changelogStorage.setLastChangelog({
             topicId: topic.topicId,
             topicMeta: topic,
-            pages,
-            markdown: templateMarkdown
+            pages
         });
 
-        // Edit to add navigation buttons (now that we have message.id)
         if (pages.length > 1) {
             await message.edit({
                 components: [buildNavButtons(0, pages.length, message.id)]
             });
         }
 
-        // Attach full .md file
-        const dateStr = (topic.date || new Date().toISOString().split('T')[0])
-            .replace(/,?\s+/g, '-').toLowerCase();
-        const filename = `changelog-latam-${dateStr}.md`;
-        const attachment = new AttachmentBuilder(
-            Buffer.from(templateMarkdown, 'utf-8'),
-            { name: filename }
-        );
-
-        await channel.send({
-            content: '📄 Detalhamento completo com tabelas em anexo:',
-            files: [attachment]
-        });
-
         pluginLogger.info('Changelog posted to channel', {
             channelId,
             topicId: topic.topicId,
-            filename,
             totalPages: pages.length
         });
     } catch (error) {
