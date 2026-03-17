@@ -100,6 +100,23 @@ async function checkForNewChangelogs() {
             return;
         }
 
+        // First-run protection: if no topics have ever been processed,
+        // seed all existing topics to avoid posting old changelogs on fresh deploy
+        const processedCount = Object.keys(changelogStorage.getProcessedTopics()).length;
+        if (processedCount === 0) {
+            pluginLogger.info('First run detected — seeding all existing topics as already known', { count: topics.length });
+            for (const topic of topics) {
+                changelogStorage.markProcessed(topic.topicId, {
+                    title: topic.title,
+                    url: topic.url,
+                    date: topic.date,
+                    source: 'seed'
+                });
+            }
+            changelogStorage.updateLastCheck();
+            return;
+        }
+
         const unprocessed = topics.filter(t => !changelogStorage.isProcessed(t.topicId));
 
         if (unprocessed.length === 0) {
@@ -174,19 +191,23 @@ async function processChangelog(topic, config) {
     const stats = summaryGenerator.getChangelogStats(parsed);
     pluginLogger.info('Changelog parsed', { topicId: topic.topicId, stats });
 
+    const embeds = summaryGenerator.buildChangelogEmbeds(parsed, topic, analysis);
+
+    changelogStorage.setLastChangelog({
+        topicId: topic.topicId,
+        topicMeta: topic,
+        pages: embeds
+    });
+
     if (config.autoPost) {
         const guildChannels = changelogStorage.getGuildChannels();
         const channelIds = Object.values(guildChannels);
 
-        if (channelIds.length > 0) {
-            const embeds = summaryGenerator.buildChangelogEmbeds(parsed, topic, analysis);
-
-            for (const channelId of channelIds) {
-                try {
-                    await postToChannel(channelId, topic, embeds);
-                } catch (err) {
-                    pluginLogger.error('Failed to post to guild channel', { channelId, error: err.message });
-                }
+        for (const channelId of channelIds) {
+            try {
+                await postToChannel(channelId, embeds);
+            } catch (err) {
+                pluginLogger.error('Failed to post to guild channel', { channelId, error: err.message });
             }
         }
     }
@@ -265,16 +286,7 @@ async function handleButtonInteraction(interaction) {
     const messageId = parts[1];
     const action = parts.slice(2).join('_');
 
-    let entry = pageStore.get(messageId);
-
-    // If not in memory, try to rebuild from disk cache
-    if (!entry) {
-        const cached = changelogStorage.getLastChangelog();
-        if (cached?.pages && interaction.message?.id === messageId) {
-            entry = { pages: cached.pages, currentPage: 0 };
-            pageStore.set(messageId, entry);
-        }
-    }
+    const entry = pageStore.get(messageId);
 
     if (!entry) {
         try {
@@ -305,44 +317,30 @@ async function handleButtonInteraction(interaction) {
 /**
  * Posts a paginated embed with buttons to a channel.
  */
-async function postToChannel(channelId, topic, pages) {
-    try {
-        const channel = await discordClient.channels.fetch(channelId);
-        if (!channel) {
-            pluginLogger.warn('Changelog channel not found', { channelId });
-            return;
-        }
+async function postToChannel(channelId, pages) {
+    const channel = await discordClient.channels.fetch(channelId);
+    if (!channel) {
+        pluginLogger.warn('Changelog channel not found', { channelId });
+        return;
+    }
 
-        const message = await channel.send({
-            embeds: [toDiscordEmbed(pages[0])],
-            components: []
-        });
+    const message = await channel.send({
+        embeds: [toDiscordEmbed(pages[0])],
+        components: []
+    });
 
-        registerPages(message.id, pages);
+    registerPages(message.id, pages);
 
-        changelogStorage.setLastChangelog({
-            topicId: topic.topicId,
-            topicMeta: topic,
-            pages
-        });
-
-        if (pages.length > 1) {
-            await message.edit({
-                components: [buildNavButtons(0, pages.length, message.id)]
-            });
-        }
-
-        pluginLogger.info('Changelog posted to channel', {
-            channelId,
-            topicId: topic.topicId,
-            totalPages: pages.length
-        });
-    } catch (error) {
-        pluginLogger.error('Error posting changelog to channel', {
-            channelId,
-            error: error.message
+    if (pages.length > 1) {
+        await message.edit({
+            components: [buildNavButtons(0, pages.length, message.id)]
         });
     }
+
+    pluginLogger.info('Changelog posted to channel', {
+        channelId,
+        totalPages: pages.length
+    });
 }
 
 const commands = {
@@ -397,7 +395,6 @@ module.exports = {
             const { parsed, analysis } = result;
             return {
                 embeds: summaryGenerator.buildChangelogEmbeds(parsed, meta, analysis),
-                templateMarkdown: summaryGenerator.generateSummary(parsed, meta),
                 stats: summaryGenerator.getChangelogStats(parsed),
                 source: analysis ? 'llm' : 'template',
                 parsed

@@ -3374,7 +3374,7 @@ module.exports = function createApiRoutes(getDiscordClient) {
 
     /**
      * GET /api/changelog/cache
-     * Returns the full cached changelog (pages, markdown, metadata)
+     * Returns the full cached changelog (pages and metadata)
      */
     router.get('/changelog/cache', (req, res) => {
         try {
@@ -3392,8 +3392,7 @@ module.exports = function createApiRoutes(getDiscordClient) {
                     topicMeta: lastChangelog.topicMeta,
                     generatedAt: lastChangelog.generatedAt,
                     pagesCount: lastChangelog.pages?.length || 0,
-                    pages: lastChangelog.pages,
-                    markdown: lastChangelog.markdown
+                    pages: lastChangelog.pages
                 }
             });
         } catch (error) {
@@ -3495,8 +3494,7 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 data: {
                     stats: result.stats,
                     source: result.source,
-                    pagesCount: result.embeds?.length || 0,
-                    markdown: result.templateMarkdown
+                    pagesCount: result.embeds?.length || 0
                 }
             });
         } catch (error) {

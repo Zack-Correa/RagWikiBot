@@ -126,16 +126,11 @@ async function handleLatest(interaction) {
             const ageMin = Math.round(age / 60000);
             logger.info('Serving changelog from cache', { topicId: cached.topicId, ageMinutes: ageMin });
 
-            const pages = cached.pages;
-            // Add cache indicator to footer of first page
-            const pagesWithAge = pages.map((p, i) => i === 0
+            const pagesWithAge = cached.pages.map((p, i) => i === 0
                 ? { ...p, footer: `${p.footer || 'BeeWiki • IA'} • Cache: ${ageMin}min atrás` }
                 : p
             );
             await sendPaginatedEmbed(interaction, pagesWithAge);
-
-            // Also cache these pages for the interaction
-            changelogStorage.setLastChangelog({ ...cached, pages: pagesWithAge });
             return;
         }
 
@@ -167,13 +162,11 @@ async function handleLatest(interaction) {
         }
 
         const pages = summaryGenerator.buildChangelogEmbeds(parsed, latest, analysis);
-        const templateMarkdown = summaryGenerator.generateSummary(parsed, latest);
 
         changelogStorage.setLastChangelog({
             topicId: latest.topicId,
             topicMeta: latest,
-            pages,
-            markdown: templateMarkdown
+            pages
         });
 
         await sendPaginatedEmbed(interaction, pages);
@@ -289,7 +282,6 @@ async function handleGenerate(interaction) {
         }
 
         const pages = summaryGenerator.buildChangelogEmbeds(parsed, topicMeta, analysis);
-        const templateMarkdown = summaryGenerator.generateSummary(parsed, topicMeta);
 
         const topicIdMatch = url.match(/\/topic\/(\d+)-/);
         const topicId = topicIdMatch ? topicIdMatch[1] : '';
@@ -297,8 +289,7 @@ async function handleGenerate(interaction) {
         changelogStorage.setLastChangelog({
             topicId,
             topicMeta,
-            pages,
-            markdown: templateMarkdown
+            pages
         });
 
         await sendPaginatedEmbed(interaction, pages);
