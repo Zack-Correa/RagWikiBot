@@ -749,7 +749,12 @@
                 <p class="deploy-description">Insira a URL de um tópico do Divine Pride para gerar o resumo.</p>
                 <form id="cl-generate-form" class="changelog-generate-form">
                     <input type="text" id="cl-generate-url" placeholder="https://www.divine-pride.net/forum/index.php?/topic/..." class="input-full" required>
-                    <button type="submit" class="btn btn-primary">Gerar Resumo</button>
+                    <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                            <input type="checkbox" id="cl-generate-post"> Postar nos canais configurados
+                        </label>
+                        <button type="submit" class="btn btn-primary">Gerar Resumo</button>
+                    </div>
                 </form>
                 <div id="cl-generate-result" class="changelog-generate-result" style="display:none;"></div>
             </div>

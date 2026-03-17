@@ -286,11 +286,15 @@ async function handleGenerate(interaction) {
         const topicIdMatch = url.match(/\/topic\/(\d+)-/);
         const topicId = topicIdMatch ? topicIdMatch[1] : '';
 
-        changelogStorage.setLastChangelog({
-            topicId,
-            topicMeta,
-            pages
-        });
+        // Only update cache if this topic is newer than (or same as) what's cached
+        const cached = changelogStorage.getLastChangelog();
+        if (!cached || !cached.topicId || parseInt(topicId) >= parseInt(cached.topicId || '0')) {
+            changelogStorage.setLastChangelog({
+                topicId,
+                topicMeta,
+                pages
+            });
+        }
 
         await sendPaginatedEmbed(interaction, pages);
 

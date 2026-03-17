@@ -14,6 +14,7 @@ const changelogCommand = require('./command');
 let pluginLogger = null;
 let discordClient = null;
 let monitorIntervalId = null;
+let isChecking = false;
 
 // Check every 30 minutes
 const MONITOR_INTERVAL_MS = 30 * 60 * 1000;
@@ -21,7 +22,8 @@ const MONITOR_INTERVAL_MS = 30 * 60 * 1000;
 // Initial delay: 3 minutes after bot start
 const INITIAL_DELAY_MS = 3 * 60 * 1000;
 
-// Global page store: messageId → { pages, currentPage }
+// Global page store: messageId → { pages, currentPage } — FIFO eviction
+const PAGE_STORE_MAX = 50;
 const pageStore = new Map();
 const NAV_PREFIX = 'clnav';
 
@@ -85,7 +87,12 @@ function onUnload(context) {
  */
 async function checkForNewChangelogs() {
     if (!discordClient) return;
+    if (isChecking) {
+        pluginLogger.debug('Changelog check already in progress, skipping');
+        return;
+    }
 
+    isChecking = true;
     try {
         const config = changelogStorage.getConfig();
         const serverFilter = config.serverFilter || 'LATAM';
@@ -150,6 +157,8 @@ async function checkForNewChangelogs() {
         changelogStorage.updateLastCheck();
     } catch (error) {
         pluginLogger.error('Error in changelog monitor cycle', { error: error.message });
+    } finally {
+        isChecking = false;
     }
 }
 
@@ -199,6 +208,7 @@ async function processChangelog(topic, config) {
         pages: embeds
     });
 
+    let posted = false;
     if (config.autoPost) {
         const guildChannels = changelogStorage.getGuildChannels();
         const channelIds = Object.values(guildChannels);
@@ -206,9 +216,15 @@ async function processChangelog(topic, config) {
         for (const channelId of channelIds) {
             try {
                 await postToChannel(channelId, embeds);
+                posted = true;
             } catch (err) {
                 pluginLogger.error('Failed to post to guild channel', { channelId, error: err.message });
             }
+        }
+
+        if (channelIds.length > 0 && !posted) {
+            pluginLogger.error('Failed to post to ALL channels — will retry next cycle', { topicId: topic.topicId });
+            return;
         }
     }
 
@@ -270,6 +286,10 @@ function buildNavButtons(currentPage, totalPages, messageId) {
  */
 function registerPages(messageId, pages) {
     pageStore.set(messageId, { pages, currentPage: 0 });
+    if (pageStore.size > PAGE_STORE_MAX) {
+        const oldest = pageStore.keys().next().value;
+        pageStore.delete(oldest);
+    }
 }
 
 /**
@@ -380,7 +400,7 @@ module.exports = {
         getGuildChannels: changelogStorage.getGuildChannels,
         setGuildChannel: changelogStorage.setGuildChannel,
         removeGuildChannel: changelogStorage.removeGuildChannel,
-        generateSummary: async (topicUrl) => {
+        generateSummary: async (topicUrl, { post = false } = {}) => {
             const topicIdMatch = topicUrl.match(/\/topic\/(\d+)-/);
             const meta = {
                 title: 'LATAM Changelog',
@@ -393,11 +413,47 @@ module.exports = {
             if (!result) return null;
 
             const { parsed, analysis } = result;
+            const embeds = summaryGenerator.buildChangelogEmbeds(parsed, meta, analysis);
+            const stats = summaryGenerator.getChangelogStats(parsed);
+
+            // Only update cache if this topic is newer than what's cached
+            const cached = changelogStorage.getLastChangelog();
+            if (!cached || !cached.topicId || parseInt(meta.topicId) >= parseInt(cached.topicId || '0')) {
+                changelogStorage.setLastChangelog({
+                    topicId: meta.topicId,
+                    topicMeta: meta,
+                    pages: embeds
+                });
+            }
+
+            let postedChannels = 0;
+            if (post && discordClient) {
+                const guildChannels = changelogStorage.getGuildChannels();
+                for (const channelId of Object.values(guildChannels)) {
+                    try {
+                        await postToChannel(channelId, embeds);
+                        postedChannels++;
+                    } catch (err) {
+                        pluginLogger.error('Failed to post generated changelog', { channelId, error: err.message });
+                    }
+                }
+            }
+
+            if (meta.topicId) {
+                changelogStorage.markProcessed(meta.topicId, {
+                    title: meta.title,
+                    url: topicUrl,
+                    stats,
+                    source: analysis ? 'llm' : 'template'
+                });
+            }
+
             return {
-                embeds: summaryGenerator.buildChangelogEmbeds(parsed, meta, analysis),
-                stats: summaryGenerator.getChangelogStats(parsed),
+                embeds,
+                stats,
                 source: analysis ? 'llm' : 'template',
-                parsed
+                parsed,
+                postedChannels
             };
         }
     }

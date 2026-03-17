@@ -54,7 +54,9 @@ function save() {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        fs.writeFileSync(STORAGE_FILE, JSON.stringify(cache, null, 2), 'utf8');
+        const tmpFile = STORAGE_FILE + '.tmp';
+        fs.writeFileSync(tmpFile, JSON.stringify(cache, null, 2), 'utf8');
+        fs.renameSync(tmpFile, STORAGE_FILE);
     } catch (error) {
         logger.error('Error saving changelog cache', { error: error.message });
     }

@@ -655,7 +655,7 @@ Seja detalhado nos highlights — quanto mais informação útil, melhor.
 ${compactData}`;
 
         const result = await llmService.generate(SYSTEM_PROMPT, userPrompt, {
-            maxTokens: 2048,
+            maxTokens: 4096,
             temperature: 0.4
         });
 
@@ -712,7 +712,40 @@ function parseLLMResponse(text) {
         }
     }
 
+    // Clean up LLM output that may have been truncated mid-token
+    overview = sanitizeTruncatedText(overview);
+    highlights = sanitizeTruncatedText(highlights);
+    context = sanitizeTruncatedText(context);
+
     return { overview, highlights, context };
+}
+
+/**
+ * Removes incomplete lines/markdown from text that was likely truncated by token limit.
+ * Drops the last line if it has unclosed bold markers or ends abruptly.
+ */
+function sanitizeTruncatedText(text) {
+    if (!text) return text;
+
+    const lines = text.split('\n');
+    const lastLine = lines[lines.length - 1];
+
+    // Count ** pairs in last line — odd count means unclosed bold
+    const boldCount = (lastLine.match(/\*\*/g) || []).length;
+    if (boldCount % 2 !== 0) {
+        lines.pop();
+    } else if (lastLine.endsWith('**') && !lastLine.endsWith(')**')) {
+        // Line ends with opening bold marker that has no content after it
+        lines.pop();
+    } else {
+        // Check for line that was clearly cut mid-sentence (ends with common truncation indicators)
+        const trimmed = lastLine.trimEnd();
+        if (/[,e]\s*$/.test(trimmed) || /\*\*$/.test(trimmed) || /\($/.test(trimmed)) {
+            lines.pop();
+        }
+    }
+
+    return lines.join('\n').trim();
 }
 
 // ===================== Discord Embed Builder =====================
@@ -753,11 +786,21 @@ function splitTextToChunks(text, maxLen) {
 
     while (remaining.length > maxLen) {
         let splitAt = remaining.lastIndexOf('\n\n', maxLen);
-        if (splitAt < maxLen * 0.3) splitAt = remaining.lastIndexOf('\n', maxLen);
-        if (splitAt < maxLen * 0.3) splitAt = remaining.lastIndexOf('. ', maxLen);
-        if (splitAt < maxLen * 0.3) splitAt = maxLen;
+        if (splitAt < maxLen * 0.2) splitAt = remaining.lastIndexOf('\n', maxLen);
+        if (splitAt < maxLen * 0.2) splitAt = remaining.lastIndexOf('. ', maxLen);
+        if (splitAt < maxLen * 0.2) splitAt = maxLen;
 
-        chunks.push(remaining.substring(0, splitAt).trimEnd());
+        let chunk = remaining.substring(0, splitAt).trimEnd();
+
+        // Ensure we don't break inside unclosed markdown bold
+        const boldCount = (chunk.match(/\*\*/g) || []).length;
+        if (boldCount % 2 !== 0) {
+            const lastBold = chunk.lastIndexOf('**');
+            chunk = chunk.substring(0, lastBold).trimEnd();
+            splitAt = lastBold;
+        }
+
+        chunks.push(chunk);
         remaining = remaining.substring(splitAt).trimStart();
     }
     if (remaining.trim()) chunks.push(remaining.trim());

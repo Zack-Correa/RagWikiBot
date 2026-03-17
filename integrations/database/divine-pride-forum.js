@@ -124,6 +124,10 @@ async function fetchChangelogTopics(serverFilter = 'LATAM') {
             return true;
         });
 
+        // Sort by topicId descending (higher ID = more recent post) as a reliable fallback
+        // in case the forum page order changes (e.g. pinned topics)
+        uniqueTopics.sort((a, b) => parseInt(b.topicId) - parseInt(a.topicId));
+
         logger.info('Changelog topics found', { serverFilter, count: uniqueTopics.length });
         return uniqueTopics;
     } catch (error) {

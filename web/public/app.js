@@ -2310,10 +2310,11 @@ async function changelogGenerate(e) {
     const url = document.getElementById('cl-generate-url').value.trim();
     if (!url) return;
 
+    const post = document.getElementById('cl-generate-post').checked;
     const btn = e.target.querySelector('button[type="submit"]');
     const resultDiv = document.getElementById('cl-generate-result');
     btn.disabled = true;
-    btn.textContent = 'Gerando...';
+    btn.textContent = post ? 'Gerando e postando...' : 'Gerando...';
     resultDiv.style.display = 'block';
     resultDiv.innerHTML = '<div class="loading">Processando changelog... Isso pode levar alguns segundos.</div>';
 
@@ -2321,12 +2322,15 @@ async function changelogGenerate(e) {
         const response = await fetch('/api/changelog/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url })
+            body: JSON.stringify({ url, post })
         });
         const result = await response.json();
 
         if (result.success) {
             const d = result.data;
+            const postInfo = d.postedChannels > 0
+                ? `<strong>Postado em:</strong> ${d.postedChannels} canal(is) ✅`
+                : (post ? '<strong>Postado:</strong> nenhum canal configurado' : '');
             resultDiv.innerHTML = `
                 <div style="margin-bottom:10px;">
                     <strong>Fonte:</strong> ${d.source === 'llm' ? '🤖 LLM' : '📝 Template'} |
@@ -2334,13 +2338,10 @@ async function changelogGenerate(e) {
                     <strong>Itens novos:</strong> ${d.stats?.addedItems || 0} |
                     <strong>Skills novas:</strong> ${d.stats?.addedSkills || 0} |
                     <strong>Combos:</strong> ${d.stats?.addedCombis || 0}
+                    ${postInfo ? '<br>' + postInfo : ''}
                 </div>
-                <details>
-                    <summary style="cursor:pointer;color:var(--accent);">Ver Markdown gerado</summary>
-                    <pre>${escapeHtml(d.markdown || 'Sem markdown')}</pre>
-                </details>
             `;
-            showToast('Resumo gerado com sucesso!', 'success');
+            showToast(d.postedChannels > 0 ? 'Resumo gerado e postado!' : 'Resumo gerado com sucesso!', 'success');
             loadChangelog();
         } else {
             resultDiv.innerHTML = `<span style="color:var(--danger);">${result.error || 'Erro desconhecido'}</span>`;

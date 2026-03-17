@@ -3471,7 +3471,7 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 });
             }
 
-            const { url } = req.body;
+            const { url, post } = req.body;
             if (!url || !url.includes('divine-pride.net')) {
                 return res.status(400).json({
                     success: false,
@@ -3479,8 +3479,8 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 });
             }
 
-            logger.info('Admin generating changelog summary', { url });
-            const result = await api.generateSummary(url);
+            logger.info('Admin generating changelog summary', { url, post: !!post });
+            const result = await api.generateSummary(url, { post: !!post });
 
             if (!result) {
                 return res.status(404).json({
@@ -3494,7 +3494,8 @@ module.exports = function createApiRoutes(getDiscordClient) {
                 data: {
                     stats: result.stats,
                     source: result.source,
-                    pagesCount: result.embeds?.length || 0
+                    pagesCount: result.embeds?.length || 0,
+                    postedChannels: result.postedChannels || 0
                 }
             });
         } catch (error) {
