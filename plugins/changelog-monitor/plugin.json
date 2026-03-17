@@ -1,0 +1,9 @@
+{
+    "name": "changelog-monitor",
+    "version": "1.0.0",
+    "description": "Monitora changelogs do Divine Pride LATAM e gera resumos contextuais automaticamente",
+    "author": "Zack Corrêa",
+    "main": "index.js",
+    "commands": ["changelog"],
+    "dependencies": []
+}

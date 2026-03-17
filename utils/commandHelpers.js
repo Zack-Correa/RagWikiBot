@@ -21,8 +21,7 @@ function getServerChoices() {
  */
 function getStoreTypeChoices() {
     return [
-        { name: 'Comprando', value: 'BUY' },
-        { name: 'Vendendo', value: 'SELL' }
+        { name: 'Comprando', value: 'BUY' }
     ];
 }
 
